@@ -17,10 +17,10 @@ CACHE_VERSION = 2
 
 
 def argument_values(parser, args):
-    """Capture public, parsed options before internal presentation defaults are added."""
+    """Capture parsed options independently of the checkout and PNG destination."""
     values = {}
     for action in parser._actions:
-        if action.dest == "dry_run" or not hasattr(args, action.dest):
+        if action.dest in ("dry_run", "out") or not hasattr(args, action.dest):
             continue
         value = getattr(args, action.dest)
         values[action.dest] = str(value.resolve()) if isinstance(value, Path) else value
@@ -99,9 +99,12 @@ def execute_cached(kind, args, cases, collect, render, temporal_rates=None, *, w
         if record_path.exists():
             try:
                 record = json.loads(record_path.read_text())
+                # Older records include the absolute PNG path from the source machine.
+                arguments = dict(record["arguments"])
+                arguments.pop("out", None)
                 if record["version"] != CACHE_VERSION:
                     reason = "cache format changed"
-                elif record["arguments"] != args._cache_arguments:
+                elif arguments != args._cache_arguments:
                     reason = "arguments changed"
                 else:
                     directory = root / "attempts" / record["attempt"]

@@ -5,6 +5,10 @@ TOPOLOGY := topo.clab.yml
 CLIENTS ?= 10
 INTERVAL ?= 1
 PACKET_HANDLING_MODE ?= filter
+SNAPSHOT ?= select
+SKIP_PROMPT ?= 0
+
+shell_quote = '$(subst ','"'"',$(1))'
 
 export CLAB_LABDIR_BASE ?= /tmp
 
@@ -21,7 +25,7 @@ ANALYSIS_TARGETS := analysis-threshold-first-drop \
 	analysis-histogram-ubf \
 	analysis-time-series
 
-.PHONY: help build deploy destroy graph client attack mode config show reset analysis $(ANALYSIS_TARGETS)
+.PHONY: help build deploy destroy graph client attack mode config show reset analysis save download $(ANALYSIS_TARGETS)
 
 help:
 	@printf '%s\n' 'Usage:' '  make <command> [VARIABLE=value ...]' '' 'Commands:'
@@ -31,6 +35,8 @@ help:
 		'make deploy'  'Build the image and deploy the lab.' \
 		'make destroy' 'Destroy the lab.' \
 		'make analysis' 'Render analyses with one lab per graph and resets between runs; reuse matching cache; use -j4 for parallel runs.' \
+		'make save'    'Save analysis and cache to S3; prompt for a name (Enter uses date and time).' \
+		'make download' 'Select a saved analysis and cache with fzf; use SNAPSHOT=<id> or latest to skip selection.' \
 		'make graph'   'Serve the topology graph at http://localhost:50080.' \
 		'make mode'    'Change the running firewall mode.' \
 		'make config'  'Update one or more runtime parameters.' \
@@ -48,7 +54,17 @@ help:
 		'' \
 		'  make client CLIENTS=10 INTERVAL=1' \
 		'  make attack CLIENTS=10 INTERVAL=1' \
-		'    Both commands default to CLIENTS=10 and INTERVAL=1.'
+		'    Both commands default to CLIENTS=10 and INTERVAL=1.' \
+		'' \
+		'  make save' \
+		'  make save NAME=experiment-01' \
+		'  make save SKIP_PROMPT=1' \
+		'    Names are appended to the UTC timestamp; Enter, NAME= or SKIP_PROMPT=1 uses the timestamp alone.' \
+		'  make download' \
+		'  make download SNAPSHOT=2026-11-05T22-30-00.000000Z' \
+		'    Fixed bucket: syn-flood-detect-tcc-luiz; requires AWS CLI credentials (AWS_PROFILE is supported).' \
+		'    Interactive downloads require fzf; snapshots are listed newest first, in UTC.' \
+		'    Restores matching files under results/analysis; preserves unrelated local files.'
 
 build:
 	@test "$$(uname -sm)" = 'Linux x86_64' || { echo 'The lab requires Linux x86_64.' >&2; exit 1; }
@@ -86,6 +102,12 @@ attack:
 	python3 ./scripts/simulate-attack.py "$(CLIENTS)" "$(INTERVAL)"
 
 analysis: $(ANALYSIS_TARGETS)
+
+save:
+	python3 scripts/analysis-storage.py save $(if $(filter undefined,$(origin NAME)),,--name $(call shell_quote,$(NAME))) $(if $(filter 1,$(SKIP_PROMPT)),--skip-prompt)
+
+download:
+	python3 scripts/analysis-storage.py download --snapshot $(call shell_quote,$(SNAPSHOT))
 
 analysis-threshold-first-drop: ANALYSIS_ARGS = --epoch-time-ms 500 --syn-count-block-threshold 2,10,20 --ubf-size 2048 \
 	--clients 15 --attackers 15 --client-interval 0.5 --attack-interval 0.1 --duration 5 \
