@@ -141,12 +141,12 @@ analysis-heatmap-epoch-legitimate: ANALYSIS_ARGS = --epoch-time-ms 50,100,150 --
 	--clients 15 --attackers 15 --client-interval 0.5 --attack-interval 0.1 --duration 5 \
 	--repetitions 1
 
-analysis-heatmap-ubf-attack: ANALYSIS_ARGS = --epoch-time-ms 500 --syn-count-block-threshold 2,10,25,50,90,120 --ubf-size 8,64,128,256,512,1024 \
-	--clients 15 --attackers 15 --client-interval 0.5 --attack-interval 0.1 --duration 5 \
+analysis-heatmap-ubf-attack: ANALYSIS_ARGS = --epoch-time-ms 500 --syn-count-block-threshold 2 --ubf-size 8,64,128,256,512,1024 \
+	--sources 10,50,100,200 --attacker-percent 20 --client-interval 0.5 --attack-interval 0.1 --duration 5 \
 	--repetitions 1
 
-analysis-heatmap-ubf-legitimate: ANALYSIS_ARGS = --epoch-time-ms 500 --syn-count-block-threshold 2,10,25,50,90,120 --ubf-size 8,64,128,256,512,1024 \
-	--clients 50 --attackers 50 --client-interval 0.1 --attack-interval 0.1 --duration 5 \
+analysis-heatmap-ubf-legitimate: ANALYSIS_ARGS = --epoch-time-ms 500 --syn-count-block-threshold 2 --ubf-size 8,64,128,256,512,1024 \
+	--sources 10,50,100,200 --attacker-percent 20 --client-interval 0.1 --attack-interval 0.1 --duration 5 \
 	--repetitions 1
 
 analysis-histogram-ubf: ANALYSIS_ARGS = --epoch-time-ms 500 --syn-count-block-threshold 3 --ubf-size 8,64,256,2048 \

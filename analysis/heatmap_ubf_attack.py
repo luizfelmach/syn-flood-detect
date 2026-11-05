@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Plot attacker SYN drop rates across UBF_SIZE and SYN_COUNT_BLOCK_THRESHOLD."""
+"""Plot attacker SYN drop rates across UBF_SIZE and SOURCES (clients + attackers)."""
 
 import argparse
 import hashlib
@@ -24,7 +24,7 @@ from common.presentation import SingleLineHelpFormatter, preflight
 
 def parse(argv=None):
     p = argparse.ArgumentParser(
-        description="Plot attacker SYN drop rates across UBF_SIZE and SYN_COUNT_BLOCK_THRESHOLD. Identical arguments reuse the last valid collection; otherwise combinations share one isolated lab with a reset between runs.",
+        description="Plot attacker SYN drop rates across UBF_SIZE and SOURCES (clients + attackers). Identical arguments reuse the last valid collection; otherwise combinations share one isolated lab with a reset between runs.",
         usage=argparse.SUPPRESS,
         add_help=False,
         formatter_class=SingleLineHelpFormatter,
@@ -35,6 +35,7 @@ def parse(argv=None):
         "epoch_ms": "--epoch-time-ms",
         "threshold": "--syn-count-block-threshold",
         "ubf_size": "--ubf-size",
+        "sources": "--sources",
     }
     required.add_argument(
         "--epoch-time-ms", dest="epoch_ms", metavar="VALUE", help="2000"
@@ -42,14 +43,18 @@ def parse(argv=None):
     required.add_argument(
         "--syn-count-block-threshold",
         dest="threshold",
-        metavar="VALUES",
-        help="3,10,50",
+        metavar="VALUE",
+        help="2",
     )
     required.add_argument(
         "--ubf-size", dest="ubf_size", metavar="VALUES", help="128,512,2048"
     )
-    required.add_argument("--clients", type=int, help="5")
-    required.add_argument("--attackers", type=int, help="10")
+    required.add_argument(
+        "--sources", metavar="VALUES", help="30,100,300,1000 (clients + attackers)"
+    )
+    required.add_argument(
+        "--attacker-percent", type=float, metavar="PERCENT", help="50 (percentage of sources)"
+    )
     required.add_argument("--duration", type=float, metavar="SECONDS", help="25")
     required.add_argument("--client-interval", type=float, metavar="SECONDS", help="1")
     required.add_argument(
@@ -72,8 +77,7 @@ def parse(argv=None):
     args = p.parse_args(argv)
     mandatory = [
         *names,
-        "clients",
-        "attackers",
+        "attacker_percent",
         "duration",
         "client_interval",
         "attack_interval",
@@ -93,20 +97,29 @@ def parse(argv=None):
                 "epoch_ms": 18446744073709551615,
                 "threshold": 4294967295,
                 "ubf_size": 8192,
+                "sources": 19998,
             }[field]
             if not numbers or any((v < 1 or v > maximum for v in numbers)):
                 raise ValueError()
         except ValueError:
             p.error(f"{flag}: expected positive integers within detector capacity")
-        if field != "ubf_size" and (not field == "threshold") and (len(numbers) != 1):
+        if field in ("epoch_ms", "threshold") and len(numbers) != 1:
             p.error(f"{flag} accepts only one value for this figure")
         setattr(args, field, numbers)
     for field in ("duration", "client_interval", "attack_interval"):
         value = getattr(args, field, None)
         if value is not None and (not math.isfinite(value) or value <= 0):
             p.error(f"{flag_for(field)} must be finite and positive")
-    if not 1 <= args.clients <= 9999 or not 1 <= args.attackers <= 9999:
-        p.error("--clients and --attackers must each be in 1..9999")
+    if not math.isfinite(args.attacker_percent) or not 0 < args.attacker_percent < 100:
+        p.error("--attacker-percent must be finite and strictly between 0 and 100")
+    for total in args.sources:
+        clients, attackers = source_counts(total, args.attacker_percent)
+        if not 1 <= clients <= 9999 or not 1 <= attackers <= 9999:
+            p.error(
+                f"--sources {total} with --attacker-percent {args.attacker_percent:g} "
+                f"produces {clients} clients and {attackers} attackers; "
+                "each group must be in 1..9999"
+            )
     if args.repetitions < 1:
         p.error("--repetitions must be positive")
     if args.out and args.out.suffix.lower() != ".png":
@@ -116,7 +129,7 @@ def parse(argv=None):
     args._cache_arguments = argument_values(p, args)
     args.ready_timeout = 300
     args.title, args.xlabel, args.ylabel = (
-        "Bloqueio de SYNs atacantes por UBF_SIZE",
+        "Bloqueio de SYNs atacantes por UBF_SIZE e SOURCES",
         None,
         None,
     )
@@ -127,13 +140,19 @@ def parse(argv=None):
     return args
 
 
+def source_counts(total, attacker_percent):
+    attackers = math.floor(total * attacker_percent / 100 + 0.5)
+    return total - attackers, attackers
+
+
 def cases_for(args):
     cases = []
     for rep in range(1, args.repetitions + 1):
         block = []
-        for epoch, threshold, size in itertools.product(
-            args.epoch_ms, args.threshold, args.ubf_size
+        for epoch, threshold, size, total in itertools.product(
+            args.epoch_ms, args.threshold, args.ubf_size, args.sources
         ):
+            clients, attackers = source_counts(total, args.attacker_percent)
             seed = args.seed + rep * 1000 + 60
             block.append(
                 dict(
@@ -141,8 +160,8 @@ def cases_for(args):
                     epoch_ms=epoch,
                     threshold=threshold,
                     ubf_size=size,
-                    clients=args.clients,
-                    attackers=args.attackers,
+                    clients=clients,
+                    attackers=attackers,
                     client_interval=args.client_interval,
                     attack_interval=args.attack_interval,
                     mode="filter",
@@ -182,9 +201,9 @@ def render(args, rows, output):
     ax = fig.subplots()
     groups = aggregate(rows)
     xlabel = "UBF_SIZE (posições utilizáveis)"
-    ylabel = "SYNs atacantes descartados (%)"
-    xs, ys = (getattr(args, "ubf_size"), args.threshold)
-    cells = {(g["ubf_size"], g["threshold"]): g for g in groups}
+    ylabel = "SOURCES (clientes + atacantes)"
+    xs, ys = (args.ubf_size, args.sources)
+    cells = {(g["ubf_size"], g["clients"] + g["attackers"]): g for g in groups}
     data = np.array(
         [
             [cells.get((x, y), {}).get("attack_drop_pct", np.nan) for x in xs]
@@ -205,7 +224,6 @@ def render(args, rows, output):
     )
     ax.set_xticks(range(len(xs)), xs)
     ax.set_yticks(range(len(ys)), ys)
-    ylabel = "SYN_COUNT_BLOCK_THRESHOLD"
     for j, y in enumerate(ys):
         for i, x in enumerate(xs):
             v = data[j, i]
@@ -308,7 +326,7 @@ def collect(args, cases, directory):
                     f"Seeds: client={case['client_seed']}, attack={case['attack_seed']}; repetition={case['repetition']}"
                 )
                 print(
-                    f"[{i}/{len(cases)}] EPOCH_TIME_MS={case['epoch_ms']} SYN_COUNT_BLOCK_THRESHOLD={case['threshold']} UBF_SIZE={case['ubf_size']}: shared lab",
+                    f"[{i}/{len(cases)}] EPOCH_TIME_MS={case['epoch_ms']} SYN_COUNT_BLOCK_THRESHOLD={case['threshold']} UBF_SIZE={case['ubf_size']} SOURCES={case['clients'] + case['attackers']} (clients={case['clients']}, attackers={case['attackers']}): shared lab",
                     flush=True,
                 )
                 run_dir = directory / case["id"]
@@ -380,8 +398,8 @@ def main(argv=None):
         ("EPOCH_TIME_MS (ms)", args.epoch_ms),
         ("SYN_COUNT_BLOCK_THRESHOLD", args.threshold),
         ("UBF_SIZE", args.ubf_size),
-        ("Legitimate sources", args.clients),
-        ("Attacker sources", args.attackers),
+        ("SOURCES (clients + attackers)", args.sources),
+        ("Attacker percentage (%)", args.attacker_percent),
         ("Client interval (s)", args.client_interval),
         ("Attack interval (s)", args.attack_interval),
         ("Measurement duration (s)", args.duration),
@@ -393,6 +411,9 @@ def main(argv=None):
             f"  {name}: {(value if value is not None else 'not applicable')}",
             flush=True,
         )
+    for total in args.sources:
+        clients, attackers = source_counts(total, args.attacker_percent)
+        print(f"  SOURCES={total}: clients={clients}, attackers={attackers}", flush=True)
     print(
         f"  Output: {args.out or 'automatic PNG under results/analysis/cache/ and native window'}",
         flush=True,
