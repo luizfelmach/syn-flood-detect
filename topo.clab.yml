@@ -1,0 +1,111 @@
+name: topo
+
+mgmt:
+  skip-when-unused: true
+  network: topo-mgmt
+  ipv4-subnet: 172.30.100.0/24
+
+topology:
+  defaults:
+    kind: linux
+    image: node:local
+    network-mode: none
+    cmd: /usr/bin/tini -- sleep infinity
+    sysctls:
+      net.ipv4.ip_forward: "0"
+      net.ipv6.conf.default.disable_ipv6: "1"
+
+  nodes:
+    server:
+      cmd: /usr/bin/tini -- nginx -g 'daemon off;'
+      exec:
+        - sysctl -w net.ipv6.conf.all.disable_ipv6=1
+        - ip link set eth1 up
+        - ip address add 172.16.0.2/16 dev eth1
+        - ip route add default via 172.16.0.1
+
+    firewall:
+      binds:
+        - ./results/packets:/var/log/syn-flood-detect
+      cmd: /usr/bin/tini -g -- /usr/local/bin/firewall-start.sh
+      restart-policy: "no"
+      env:
+        RUST_LOG: info
+      sysctls:
+        net.ipv4.ip_forward: "1"
+      exec:
+        - sysctl -w net.ipv6.conf.all.disable_ipv6=1
+
+        - ip link set eth1 up
+        - ip address add 203.0.113.2/30 dev eth1
+        - ip link set eth2 up
+        - ip address add 172.16.0.1/16 dev eth2
+        # Client source blocks remain routed toward internet.
+        - ip route add 104.16.0.0/16 via 203.0.113.1
+        - ip route add 128.112.0.0/16 via 203.0.113.1
+        - ip route add 134.58.0.0/16 via 203.0.113.1
+        - ip route add 143.107.0.0/16 via 203.0.113.1
+        - ip route add 155.98.0.0/16 via 203.0.113.1
+        - ip route add 164.15.0.0/16 via 203.0.113.1
+        # Attacker source blocks remain routed toward internet.
+        - ip route add 37.120.0.0/16 via 203.0.113.1
+        - ip route add 46.165.0.0/16 via 203.0.113.1
+        - ip route add 62.210.0.0/16 via 203.0.113.1
+        - ip route add 77.88.0.0/16 via 203.0.113.1
+        - ip route add 89.160.0.0/16 via 203.0.113.1
+        - ip route add 185.20.0.0/16 via 203.0.113.1
+        - iptables -t nat -A PREROUTING -i eth1 -d 203.0.113.2 -j DNAT --to-destination 172.16.0.2
+        - iptables -P FORWARD DROP
+        - iptables -A FORWARD -i eth1 -o eth2 -j ACCEPT
+        - iptables -A FORWARD -i eth2 -o eth1 -j ACCEPT
+        - touch /run/firewall-network-ready
+
+    internet:
+      sysctls:
+        net.ipv4.ip_forward: "1"
+      exec:
+        - sysctl -w net.ipv6.conf.all.disable_ipv6=1
+
+        - ip link set eth2 up
+        - ip address add 203.0.113.1/30 dev eth2
+        - ip route add default via 203.0.113.2 dev eth2
+        - ip link set eth1 up
+        - ip address add 10.10.1.1/30 dev eth1
+        - ip link set eth3 up
+        - ip address add 10.10.2.1/30 dev eth3
+        # Return traffic goes to the corresponding origin node.
+        - ip route add 104.16.0.0/16 via 10.10.1.2
+        - ip route add 128.112.0.0/16 via 10.10.1.2
+        - ip route add 134.58.0.0/16 via 10.10.1.2
+        - ip route add 143.107.0.0/16 via 10.10.1.2
+        - ip route add 155.98.0.0/16 via 10.10.1.2
+        - ip route add 164.15.0.0/16 via 10.10.1.2
+
+        - ip route add 37.120.0.0/16 via 10.10.2.2
+        - ip route add 46.165.0.0/16 via 10.10.2.2
+        - ip route add 62.210.0.0/16 via 10.10.2.2
+        - ip route add 77.88.0.0/16 via 10.10.2.2
+        - ip route add 89.160.0.0/16 via 10.10.2.2
+        - ip route add 185.20.0.0/16 via 10.10.2.2
+
+    client:
+      exec:
+        - ip link set eth1 up
+        - ip address add 10.10.1.2/30 dev eth1
+        - ip route add default via 10.10.1.1
+
+    attacker:
+      exec:
+        - ip link set eth1 up
+        - ip address add 10.10.2.2/30 dev eth1
+        - ip route add default via 10.10.2.1
+
+  links:
+    - endpoints: [internet:eth2, firewall:eth1]
+      mtu: 1500
+    - endpoints: [firewall:eth2, server:eth1]
+      mtu: 1500
+    - endpoints: [client:eth1, internet:eth1]
+      mtu: 1500
+    - endpoints: [attacker:eth1, internet:eth3]
+      mtu: 1500

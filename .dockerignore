@@ -1,0 +1,14 @@
+*
+!Dockerfile
+!scripts/
+!Cargo.toml
+!Cargo.lock
+!.cargo/
+!.cargo/**
+!syn-flood-detect/
+!syn-flood-detect/**
+!syn-flood-detect-common/
+!syn-flood-detect-common/**
+!syn-flood-detect-ebpf/
+!syn-flood-detect-ebpf/**
+**/target/

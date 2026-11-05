@@ -1,0 +1,142 @@
+.DEFAULT_GOAL := deploy
+
+CLAB := containerlab
+TOPOLOGY := topo.clab.yml
+CLIENTS ?= 10
+INTERVAL ?= 1
+PACKET_HANDLING_MODE ?= filter
+
+export CLAB_LABDIR_BASE ?= /tmp
+
+ANALYSIS_TARGETS := analysis-threshold-first-drop \
+	analysis-threshold-passed-syns \
+	analysis-threshold-attack-drop \
+	analysis-confusion-matrix \
+	analysis-boxplot-first-drop \
+	analysis-epoch-boundary \
+	analysis-heatmap-epoch-attack \
+	analysis-heatmap-epoch-legitimate \
+	analysis-heatmap-ubf-attack \
+	analysis-heatmap-ubf-legitimate \
+	analysis-histogram-ubf \
+	analysis-time-series
+
+.PHONY: help build deploy destroy graph client attack mode config show reset analysis $(ANALYSIS_TARGETS)
+
+help:
+	@printf '%s\n' 'Usage:' '  make <command> [VARIABLE=value ...]' '' 'Commands:'
+	@printf '  %-14s %s\n' \
+		'make help'    'Show this help.' \
+		'make build'   'Build the node image.' \
+		'make deploy'  'Build the image and deploy the lab.' \
+		'make destroy' 'Destroy the lab.' \
+		'make analysis' 'Render analyses with one lab per graph and resets between runs; reuse matching cache; use -j4 for parallel runs.' \
+		'make graph'   'Serve the topology graph at http://localhost:50080.' \
+		'make mode'    'Change the running firewall mode.' \
+		'make config'  'Update one or more runtime parameters.' \
+		'make show'    'Show the current mode and detector parameters.' \
+		'make reset'   'Clear detector history without changing mode or statistics.' \
+		'make client'  'Send HTTP requests and log attempts.' \
+		'make attack'  'Send SYN packets with hping3 and log attempts.'
+	@printf '%s\n' '' 'Analysis targets (results/analysis/<name_with_underscores>.png; collect only when arguments change or cache is unavailable):' $(ANALYSIS_TARGETS)
+	@printf '%s\n' '' 'Examples:' \
+		'  make mode PACKET_HANDLING_MODE=filter' \
+		'    PACKET_HANDLING_MODE defaults to filter: allow, block or filter.' \
+		'' \
+		'  make config EPOCH_TIME_MS=2000 SYN_COUNT_BLOCK_THRESHOLD=3 UBF_SIZE=2048' \
+		'    Set EPOCH_TIME_MS, SYN_COUNT_BLOCK_THRESHOLD and/or UBF_SIZE (1..8192).' \
+		'' \
+		'  make client CLIENTS=10 INTERVAL=1' \
+		'  make attack CLIENTS=10 INTERVAL=1' \
+		'    Both commands default to CLIENTS=10 and INTERVAL=1.'
+
+build:
+	@test "$$(uname -sm)" = 'Linux x86_64' || { echo 'The lab requires Linux x86_64.' >&2; exit 1; }
+	docker build --platform linux/amd64 -t node:local .
+
+deploy: build
+	mkdir -p results/packets
+	$(CLAB) deploy -t "$(TOPOLOGY)" --skip-labdir-acl
+
+destroy:
+	$(CLAB) destroy -t "$(TOPOLOGY)" --cleanup
+
+graph:
+	$(CLAB) graph -t "$(TOPOLOGY)"
+
+mode:
+	$(if $(filter undefined,$(origin EBPF_MODE)),,$(error EBPF_MODE was renamed; use PACKET_HANDLING_MODE))
+	$(if $(and $(filter 1,$(words $(PACKET_HANDLING_MODE))),$(filter allow block filter,$(PACKET_HANDLING_MODE))),,$(error Set PACKET_HANDLING_MODE to allow, block or filter))
+	docker exec clab-topo-firewall /usr/local/bin/syn-flood-detect mode "$(PACKET_HANDLING_MODE)"
+
+config:
+	$(if $(strip $(EPOCH_TIME_MS)$(SYN_COUNT_BLOCK_THRESHOLD)$(UBF_SIZE)),,$(error Set EPOCH_TIME_MS, SYN_COUNT_BLOCK_THRESHOLD and/or UBF_SIZE))
+	docker exec clab-topo-firewall /usr/local/bin/syn-flood-detect config $(if $(filter undefined,$(origin EPOCH_TIME_MS)),,--epoch-time-ms "$(EPOCH_TIME_MS)") $(if $(filter undefined,$(origin SYN_COUNT_BLOCK_THRESHOLD)),,--syn-count-block-threshold "$(SYN_COUNT_BLOCK_THRESHOLD)") $(if $(filter undefined,$(origin UBF_SIZE)),,--ubf-size "$(UBF_SIZE)")
+
+show:
+	docker exec clab-topo-firewall /usr/local/bin/syn-flood-detect show
+
+reset:
+	docker exec clab-topo-firewall /usr/local/bin/syn-flood-detect reset
+
+client:
+	python3 ./scripts/simulate-clients.py "$(CLIENTS)" "$(INTERVAL)"
+
+attack:
+	python3 ./scripts/simulate-attack.py "$(CLIENTS)" "$(INTERVAL)"
+
+analysis: $(ANALYSIS_TARGETS)
+
+analysis-threshold-first-drop: ANALYSIS_ARGS = --epoch-time-ms 500 --syn-count-block-threshold 2,10,20 --ubf-size 2048 \
+	--clients 15 --attackers 15 --client-interval 0.5 --attack-interval 0.1 --duration 5 \
+	--repetitions 1
+
+analysis-threshold-passed-syns: ANALYSIS_ARGS = --epoch-time-ms 500 --syn-count-block-threshold 2,10,20 --ubf-size 2048 \
+	--clients 15 --attackers 15 --client-interval 0.5 --attack-interval 0.1 --duration 5 \
+	--repetitions 1
+
+analysis-threshold-attack-drop: ANALYSIS_ARGS = --epoch-time-ms 500 --syn-count-block-threshold 2,10,20 --ubf-size 2048 \
+	--clients 15 --attackers 15 --client-interval 0.5 --attack-interval 0.1 --duration 5 \
+	--repetitions 1
+
+analysis-confusion-matrix: ANALYSIS_ARGS = --epoch-time-ms 500 --syn-count-block-threshold 2,10,20 --ubf-size 2048 \
+	--clients 15 --attackers 15 --client-interval 0.5 --attack-interval 0.1 --duration 5 \
+	--repetitions 1
+
+analysis-boxplot-first-drop: ANALYSIS_ARGS = --epoch-time-ms 500 --syn-count-block-threshold 2,10,20 --ubf-size 2048 \
+	--clients 15 --attackers 15 --client-interval 0.5 --attack-interval 0.1 --duration 5 \
+	--repetitions 1
+
+analysis-epoch-boundary: ANALYSIS_ARGS = --epoch-time-ms 1,45,55,75,95,105,150,195,205,250 --syn-count-block-threshold 3 --ubf-size 2048 \
+	--clients 15 --attackers 15 --client-interval 0.5 --attack-interval 0.05,0.1,0.2 --duration 5 \
+	--repetitions 1
+
+analysis-heatmap-epoch-attack: ANALYSIS_ARGS = --epoch-time-ms 50,100,150 --syn-count-block-threshold 2,20 --ubf-size 128 \
+	--clients 15 --attackers 15 --client-interval 0.5 --attack-interval 0.1 --duration 5 \
+	--repetitions 1
+
+analysis-heatmap-epoch-legitimate: ANALYSIS_ARGS = --epoch-time-ms 50,100,150 --syn-count-block-threshold 2,20 --ubf-size 128 \
+	--clients 15 --attackers 15 --client-interval 0.5 --attack-interval 0.1 --duration 5 \
+	--repetitions 1
+
+analysis-heatmap-ubf-attack: ANALYSIS_ARGS = --epoch-time-ms 500 --syn-count-block-threshold 2,10,25,50,90,120 --ubf-size 8,64,128,256,512,1024 \
+	--clients 15 --attackers 15 --client-interval 0.5 --attack-interval 0.1 --duration 5 \
+	--repetitions 1
+
+analysis-heatmap-ubf-legitimate: ANALYSIS_ARGS = --epoch-time-ms 500 --syn-count-block-threshold 2,10,25,50,90,120 --ubf-size 8,64,128,256,512,1024 \
+	--clients 50 --attackers 50 --client-interval 0.1 --attack-interval 0.1 --duration 5 \
+	--repetitions 1
+
+analysis-histogram-ubf: ANALYSIS_ARGS = --epoch-time-ms 500 --syn-count-block-threshold 3 --ubf-size 8,64,256,2048 \
+	--clients 15 --attackers 15 --client-interval 0.5 --attack-interval 0.1 --duration 5 \
+	--repetitions 1
+
+analysis-time-series: ANALYSIS_ARGS = --epoch-time-ms 500 --syn-count-block-threshold 3 --ubf-size 2048 \
+	--clients 2 --attackers 3 --client-interval 0.5 --attack-interval 0.1 --duration 10 \
+	--before 2 --after 2 --bin-seconds 0.5
+
+$(ANALYSIS_TARGETS):
+	@nix-shell analysis/shell.nix --run 'set -eu; \
+		mkdir -p results/analysis; \
+		python3 analysis/$(subst -,_,$(patsubst analysis-%,%,$@)).py $(ANALYSIS_ARGS) \
+			--out "results/analysis/$(subst -,_,$(patsubst analysis-%,%,$@)).png"'
