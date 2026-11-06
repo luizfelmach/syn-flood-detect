@@ -44,7 +44,6 @@ help:
 		'make reset'   'Clear detector history without changing mode or statistics.' \
 		'make client'  'Send HTTP requests and log attempts.' \
 		'make attack'  'Send SYN packets with hping3 and log attempts.'
-	@printf '%s\n' '' 'Analysis targets (results/analysis/<name_with_underscores>.png; collect only when arguments change or cache is unavailable):' $(ANALYSIS_TARGETS)
 	@printf '%s\n' '' 'Examples:' \
 		'  make mode PACKET_HANDLING_MODE=filter' \
 		'    PACKET_HANDLING_MODE defaults to filter: allow, block or filter.' \
