@@ -30,7 +30,8 @@ ANALYSIS_TARGETS := analysis-threshold-first-drop \
 	analysis-hash-comparison \
 	analysis-hash-comparison-primes \
 	analysis-halfsiphash-ubf-sweep \
-	analysis-hash-avalanche
+	analysis-hash-avalanche \
+	analysis-hash-port-bits
 
 .PHONY: help build deploy destroy graph client attack mode config show reset analysis save download $(ANALYSIS_TARGETS)
 
@@ -183,9 +184,14 @@ analysis-halfsiphash-ubf-sweep: ANALYSIS_ARGS = --ubf-center 4096 --ubf-radius 2
 
 analysis-hash-avalanche: ANALYSIS_ARGS = --sources 2000 --attacker-percent 50
 
+analysis-hash-port-bits: ANALYSIS_ARGS = --ubf-size 1024 \
+	--keys 16,32,64,96,128,160,192,224,256 \
+	--src-ip 104.16.1.1 --dst-ip 203.0.113.2 --port-base 80 \
+	--port-bits 4,5,6,7,12,13,14,15
+
 $(ANALYSIS_TARGETS):
 	$(validate_hash)
 	@nix-shell analysis/shell.nix --run 'set -eu; \
 		mkdir -p results/analysis; \
-		python3 analysis/$(subst -,_,$(patsubst analysis-%,%,$@)).py $(ANALYSIS_ARGS) $(if $(filter-out analysis-hash-comparison analysis-hash-comparison-primes analysis-halfsiphash-ubf-sweep analysis-hash-avalanche,$@),--hash-algorithm "$(HASH_ALGORITHM)") \
+		python3 analysis/$(subst -,_,$(patsubst analysis-%,%,$@)).py $(ANALYSIS_ARGS) $(if $(filter-out analysis-hash-comparison analysis-hash-comparison-primes analysis-halfsiphash-ubf-sweep analysis-hash-avalanche analysis-hash-port-bits,$@),--hash-algorithm "$(HASH_ALGORITHM)") \
 			--out "results/analysis/$(subst -,_,$(patsubst analysis-%,%,$@)).png"'
