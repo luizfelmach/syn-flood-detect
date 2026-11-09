@@ -26,7 +26,9 @@ ANALYSIS_TARGETS := analysis-threshold-first-drop \
 	analysis-heatmap-ubf-attack \
 	analysis-heatmap-ubf-legitimate \
 	analysis-histogram-ubf \
-	analysis-time-series
+	analysis-time-series \
+	analysis-hash-comparison \
+	analysis-hash-comparison-primes
 
 .PHONY: help build deploy destroy graph client attack mode config show reset analysis save download $(ANALYSIS_TARGETS)
 
@@ -165,9 +167,17 @@ analysis-time-series: ANALYSIS_ARGS = --epoch-time-ms 500 --syn-count-block-thre
 	--clients 2 --attackers 3 --client-interval 0.5 --attack-interval 0.1 --duration 10 \
 	--before 2 --after 2 --bin-seconds 0.5
 
+analysis-hash-comparison: ANALYSIS_ARGS = --ubf-size 8192 \
+	--sources 100,200,250,300,400,500,600,700,800,900,1000,1100,1200,1300,1400,1500,1600,1700,1800,1900,2000 --attacker-percent 50 \
+	--repetitions 5
+
+analysis-hash-comparison-primes: ANALYSIS_ARGS = --ubf-size 8191 \
+	--sources 100,200,250,300,400,500,600,700,800,900,1000,1100,1200,1300,1400,1500,1600,1700,1800,1900,2000 --attacker-percent 50 \
+	--repetitions 5
+
 $(ANALYSIS_TARGETS):
 	$(validate_hash)
 	@nix-shell analysis/shell.nix --run 'set -eu; \
 		mkdir -p results/analysis; \
-		python3 analysis/$(subst -,_,$(patsubst analysis-%,%,$@)).py $(ANALYSIS_ARGS) --hash-algorithm "$(HASH_ALGORITHM)" \
+		python3 analysis/$(subst -,_,$(patsubst analysis-%,%,$@)).py $(ANALYSIS_ARGS) $(if $(filter-out analysis-hash-comparison analysis-hash-comparison-primes,$@),--hash-algorithm "$(HASH_ALGORITHM)") \
 			--out "results/analysis/$(subst -,_,$(patsubst analysis-%,%,$@)).png"'
