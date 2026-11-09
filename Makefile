@@ -5,6 +5,9 @@ TOPOLOGY := topo.clab.yml
 CLIENTS ?= 10
 INTERVAL ?= 1
 PACKET_HANDLING_MODE ?= filter
+HASH_ALGORITHM ?= halfsiphash
+
+validate_hash = $(if $(and $(filter 1,$(words $(HASH_ALGORITHM))),$(filter fnv1a murmur3 halfsiphash,$(HASH_ALGORITHM))),,$(error Set HASH_ALGORITHM to fnv1a, murmur3 or halfsiphash))
 SNAPSHOT ?= select
 SKIP_PROMPT ?= 0
 
@@ -50,6 +53,12 @@ help:
 		'' \
 		'  make config EPOCH_TIME_MS=2000 SYN_COUNT_BLOCK_THRESHOLD=3 UBF_SIZE=2048' \
 		'    Set EPOCH_TIME_MS, SYN_COUNT_BLOCK_THRESHOLD and/or UBF_SIZE (1..8192).' \
+		'  make config HASH_ALGORITHM=murmur3' \
+		'  make config HASH_ALGORITHM=halfsiphash' \
+		'    make config always selects HASH_ALGORITHM (default: halfsiphash).' \
+		'    Pause traffic before changing hash or UBF_SIZE; history is cleared.' \
+		'  make analysis HASH_ALGORITHM=fnv1a' \
+		'    All analyses default to halfsiphash; choices: fnv1a, murmur3, halfsiphash.' \
 		'' \
 		'  make client CLIENTS=10 INTERVAL=1' \
 		'  make attack CLIENTS=10 INTERVAL=1' \
@@ -85,8 +94,8 @@ mode:
 	docker exec clab-topo-firewall /usr/local/bin/syn-flood-detect mode "$(PACKET_HANDLING_MODE)"
 
 config:
-	$(if $(strip $(EPOCH_TIME_MS)$(SYN_COUNT_BLOCK_THRESHOLD)$(UBF_SIZE)),,$(error Set EPOCH_TIME_MS, SYN_COUNT_BLOCK_THRESHOLD and/or UBF_SIZE))
-	docker exec clab-topo-firewall /usr/local/bin/syn-flood-detect config $(if $(filter undefined,$(origin EPOCH_TIME_MS)),,--epoch-time-ms "$(EPOCH_TIME_MS)") $(if $(filter undefined,$(origin SYN_COUNT_BLOCK_THRESHOLD)),,--syn-count-block-threshold "$(SYN_COUNT_BLOCK_THRESHOLD)") $(if $(filter undefined,$(origin UBF_SIZE)),,--ubf-size "$(UBF_SIZE)")
+	$(validate_hash)
+	docker exec clab-topo-firewall /usr/local/bin/syn-flood-detect config --hash-algorithm "$(HASH_ALGORITHM)" $(if $(filter undefined,$(origin EPOCH_TIME_MS)),,--epoch-time-ms "$(EPOCH_TIME_MS)") $(if $(filter undefined,$(origin SYN_COUNT_BLOCK_THRESHOLD)),,--syn-count-block-threshold "$(SYN_COUNT_BLOCK_THRESHOLD)") $(if $(filter undefined,$(origin UBF_SIZE)),,--ubf-size "$(UBF_SIZE)")
 
 show:
 	docker exec clab-topo-firewall /usr/local/bin/syn-flood-detect show
@@ -157,7 +166,8 @@ analysis-time-series: ANALYSIS_ARGS = --epoch-time-ms 500 --syn-count-block-thre
 	--before 2 --after 2 --bin-seconds 0.5
 
 $(ANALYSIS_TARGETS):
+	$(validate_hash)
 	@nix-shell analysis/shell.nix --run 'set -eu; \
 		mkdir -p results/analysis; \
-		python3 analysis/$(subst -,_,$(patsubst analysis-%,%,$@)).py $(ANALYSIS_ARGS) \
+		python3 analysis/$(subst -,_,$(patsubst analysis-%,%,$@)).py $(ANALYSIS_ARGS) --hash-algorithm "$(HASH_ALGORITHM)" \
 			--out "results/analysis/$(subst -,_,$(patsubst analysis-%,%,$@)).png"'

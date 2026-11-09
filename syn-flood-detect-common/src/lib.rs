@@ -1,5 +1,7 @@
 #![no_std]
 
+pub mod hashing;
+
 /// Physical capacity; UBF_SIZE controls the usable hash range.
 pub const UBF_ENTRIES: u32 = 8192;
 pub const DEFAULT_UBF_SIZE: u32 = 2048;
@@ -30,7 +32,7 @@ pub struct FirewallConfig {
     pub syn_count_block_threshold: u32,
     pub packet_handling_mode: u32,
     pub ubf_size: u32,
-    pub reserved: u32,
+    pub hash_algorithm: u32,
 }
 
 impl Default for FirewallConfig {
@@ -40,7 +42,7 @@ impl Default for FirewallConfig {
             syn_count_block_threshold: 3,
             packet_handling_mode: MODE_FILTER,
             ubf_size: DEFAULT_UBF_SIZE,
-            reserved: 0,
+            hash_algorithm: hashing::DEFAULT_HASH_ALGORITHM,
         }
     }
 }

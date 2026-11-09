@@ -65,6 +65,49 @@ impl fmt::Display for Mode {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, clap::ValueEnum, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum HashAlgorithm {
+    Fnv1a,
+    Murmur3,
+    #[default]
+    Halfsiphash,
+}
+
+impl HashAlgorithm {
+    pub fn value(self) -> u32 {
+        use syn_flood_detect_common::hashing::*;
+        match self {
+            Self::Fnv1a => HASH_FNV1A,
+            Self::Murmur3 => HASH_MURMUR3,
+            Self::Halfsiphash => HASH_HALFSIPHASH,
+        }
+    }
+}
+
+impl TryFrom<u32> for HashAlgorithm {
+    type Error = anyhow::Error;
+    fn try_from(value: u32) -> anyhow::Result<Self> {
+        use syn_flood_detect_common::hashing::*;
+        match value {
+            HASH_FNV1A => Ok(Self::Fnv1a),
+            HASH_MURMUR3 => Ok(Self::Murmur3),
+            HASH_HALFSIPHASH => Ok(Self::Halfsiphash),
+            _ => bail!("invalid hash algorithm: {value}"),
+        }
+    }
+}
+
+impl fmt::Display for HashAlgorithm {
+    fn fmt(&self, out: &mut fmt::Formatter<'_>) -> fmt::Result {
+        out.write_str(match self {
+            Self::Fnv1a => "fnv1a",
+            Self::Murmur3 => "murmur3",
+            Self::Halfsiphash => "halfsiphash",
+        })
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Configuration {
@@ -73,6 +116,7 @@ pub struct Configuration {
     epoch_time_ms: u64,
     syn_count_block_threshold: u32,
     ubf_size: u32,
+    hash_algorithm: HashAlgorithm,
 }
 
 impl TryFrom<FirewallConfig> for Configuration {
@@ -89,6 +133,7 @@ impl TryFrom<FirewallConfig> for Configuration {
             epoch_time_ms: config.epoch_time_ms,
             syn_count_block_threshold: config.syn_count_block_threshold,
             ubf_size: config.ubf_size,
+            hash_algorithm: config.hash_algorithm.try_into()?,
         })
     }
 }
@@ -97,7 +142,7 @@ impl From<Configuration> for FirewallConfig {
     fn from(config: Configuration) -> Self {
         Self {
             packet_handling_mode: config.packet_handling_mode.value(),
-            reserved: 0,
+            hash_algorithm: config.hash_algorithm.value(),
             epoch_time_ms: config.epoch_time_ms,
             syn_count_block_threshold: config.syn_count_block_threshold,
             ubf_size: config.ubf_size,
@@ -109,11 +154,12 @@ impl fmt::Display for Configuration {
     fn fmt(&self, out: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             out,
-            "mode={} epoch_time_ms={} syn_count_block_threshold={} ubf_size={}",
+            "mode={} epoch_time_ms={} syn_count_block_threshold={} ubf_size={} hash_algorithm={}",
             self.packet_handling_mode,
             self.epoch_time_ms,
             self.syn_count_block_threshold,
-            self.ubf_size
+            self.ubf_size,
+            self.hash_algorithm
         )
     }
 }
@@ -124,6 +170,7 @@ pub struct ConfigUpdate {
     pub epoch_time_ms: Option<NonZeroU64>,
     pub syn_count_block_threshold: Option<NonZeroU32>,
     pub ubf_size: Option<u32>,
+    pub hash_algorithm: Option<HashAlgorithm>,
 }
 
 impl ConfigUpdate {
@@ -131,14 +178,20 @@ impl ConfigUpdate {
         if self.epoch_time_ms.is_none()
             && self.syn_count_block_threshold.is_none()
             && self.ubf_size.is_none()
+            && self.hash_algorithm.is_none()
         {
-            bail!("provide epoch_time_ms, syn_count_block_threshold and/or ubf_size");
+            bail!(
+                "provide epoch_time_ms, syn_count_block_threshold, ubf_size and/or hash_algorithm"
+            );
         }
         if let Some(value) = self.epoch_time_ms {
             current.epoch_time_ms = value.get();
         }
         if let Some(value) = self.syn_count_block_threshold {
             current.syn_count_block_threshold = value.get();
+        }
+        if let Some(value) = self.hash_algorithm {
+            current.hash_algorithm = value;
         }
         if let Some(value) = self.ubf_size {
             current.ubf_size = value;
@@ -325,7 +378,9 @@ impl Controller {
             } => self.change_mode(packet_handling_mode)?,
             Request::Config(update) => {
                 let next = update.apply(self.current)?;
-                if next.ubf_size != self.current.ubf_size {
+                if next.ubf_size != self.current.ubf_size
+                    || next.hash_algorithm != self.current.hash_algorithm
+                {
                     // Hash indices change. Quiesce traffic for a clean experimental boundary.
                     self.clear_history()?;
                 }
@@ -354,6 +409,151 @@ impl Controller {
                 Ok(Err(error)) => log::warn!("control request failed: {error:#}"),
                 Err(_) => log::warn!("control request timed out"),
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn json_updates_preserve_other_parameters() {
+        let initial = Configuration::try_from(FirewallConfig::default()).unwrap();
+        assert_eq!(initial.hash_algorithm, HashAlgorithm::Halfsiphash);
+        for name in ["fnv1a", "murmur3", "halfsiphash"] {
+            let request = format!(r#"{{"command":"config","hash_algorithm":"{name}"}}"#);
+            let Request::Config(update) = serde_json::from_str(&request).unwrap() else {
+                panic!()
+            };
+            let changed = update.apply(initial).unwrap();
+            assert_eq!(changed.hash_algorithm.to_string(), name);
+            assert_eq!(changed.ubf_size, initial.ubf_size);
+            assert_eq!(changed.epoch_time_ms, initial.epoch_time_ms);
+            assert_eq!(changed.packet_handling_mode, initial.packet_handling_mode);
+            assert_eq!(
+                changed.syn_count_block_threshold,
+                initial.syn_count_block_threshold
+            );
+            let update: ConfigUpdate = serde_json::from_str(r#"{"ubf_size":512}"#).unwrap();
+            assert_eq!(
+                update.apply(changed).unwrap().hash_algorithm,
+                changed.hash_algorithm
+            );
+        }
+        assert!(
+            serde_json::from_str::<Request>(r#"{"command":"config","hash_algorithm":"invalid"}"#)
+                .is_err()
+        );
+        assert!(
+            Configuration::try_from(FirewallConfig {
+                hash_algorithm: 99,
+                ..FirewallConfig::default()
+            })
+            .is_err()
+        );
+        assert_eq!(core::mem::size_of::<FirewallConfig>(), 24);
+    }
+
+    #[test]
+    #[ignore = "requires Linux BPF privileges; run in an isolated privileged container"]
+    fn kernel_hash_transitions() {
+        let mut ebpf = Ebpf::load(aya::include_bytes_aligned!(concat!(
+            env!("OUT_DIR"),
+            "/syn-flood-detect"
+        )))
+        .unwrap();
+        let program: &mut aya::programs::Xdp = ebpf
+            .program_mut("syn_flood_detect")
+            .unwrap()
+            .try_into()
+            .unwrap();
+        program.load().unwrap(); // Includes verifier validation of all hash branches.
+        let mut controller = Controller::new(&mut ebpf, FirewallConfig::default()).unwrap();
+        for algorithm in [
+            HashAlgorithm::Fnv1a,
+            HashAlgorithm::Murmur3,
+            HashAlgorithm::Halfsiphash,
+        ] {
+            controller
+                .history
+                .set(
+                    0,
+                    UpdatableBloomFilter {
+                        counter: 7,
+                        timestamp: 1,
+                    },
+                    0,
+                )
+                .unwrap();
+            let update = ConfigUpdate {
+                epoch_time_ms: None,
+                syn_count_block_threshold: None,
+                ubf_size: None,
+                hash_algorithm: Some(algorithm),
+            };
+            controller.handle(Request::Config(update)).unwrap();
+            assert_eq!(controller.history.get(&0, 0).unwrap().counter, 0);
+            assert_eq!(
+                controller.config.get(&0, 0).unwrap().hash_algorithm,
+                algorithm.value()
+            );
+            use aya::programs::{TestRun, TestRunOptions, Xdp};
+            use syn_flood_detect_common::hashing::*;
+            let program: &mut Xdp = ebpf
+                .program_mut("syn_flood_detect")
+                .unwrap()
+                .try_into()
+                .unwrap();
+            let mut packet = [0u8; 54];
+            packet[12..14].copy_from_slice(&0x0800u16.to_be_bytes());
+            packet[14] = 0x45;
+            packet[16..18].copy_from_slice(&40u16.to_be_bytes());
+            packet[23] = 6;
+            packet[26..30].copy_from_slice(&[104, 0, 1, 1]);
+            packet[30..34].copy_from_slice(&[203, 0, 113, 2]);
+            packet[36..38].copy_from_slice(&80u16.to_be_bytes());
+            packet[46] = 0x50;
+            packet[47] = 2;
+            let key = service_key([104, 0, 1, 1], [203, 0, 113, 2], 80);
+            let hash = match algorithm {
+                HashAlgorithm::Fnv1a => fnv1a_32(&key),
+                HashAlgorithm::Murmur3 => murmur3_x86_32(&key),
+                HashAlgorithm::Halfsiphash => halfsiphash_2_4_32(&key),
+            };
+            let index = hash % controller.current.ubf_size;
+            let run = |bytes: &[u8]| {
+                program
+                    .test_run(TestRunOptions {
+                        data_in: Some(bytes),
+                        ..Default::default()
+                    })
+                    .unwrap()
+                    .return_value
+            };
+            assert_eq!(run(&packet), 2); // XDP_PASS for the first SYN
+            assert_eq!(controller.history.get(&index, 0).unwrap().counter, 1);
+            packet[47] = 0x10;
+            assert_eq!(run(&packet), 2); // ACK clears that same bucket
+            assert_eq!(controller.history.get(&index, 0).unwrap().counter, 0);
+            packet[47] = 2;
+            assert_eq!(run(&packet), 2);
+            assert_eq!(run(&packet), 2);
+            assert_eq!(run(&packet), 1); // Third SYN reaches the default threshold
+
+            controller
+                .history
+                .set(
+                    0,
+                    UpdatableBloomFilter {
+                        counter: 7,
+                        timestamp: 1,
+                    },
+                    0,
+                )
+                .unwrap();
+            controller.handle(Request::Config(update)).unwrap();
+            assert_eq!(controller.history.get(&0, 0).unwrap().counter, 7);
         }
     }
 }

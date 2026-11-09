@@ -5,19 +5,16 @@ import csv
 from ipaddress import IPv4Address
 from statistics import mean
 
+from .hashing import DEFAULT_HASH_ALGORITHM, HASH_FUNCTIONS
 from .metrics import pct, write_csv
 from .progress import report
 
 CATEGORIES = ("client", "attack", "mixed")
 
 
-def hash_flow(src_ip, dst_ip, dst_port, size):
-    """Match detector.rs, including dst_port.to_be() on the x86_64 lab target."""
-    value = 0x811C9DC5
-    # Rust consumes the low byte then the high byte AFTER to_be(), hence network
-    # byte order here. Mask every multiplication to match u32::wrapping_mul.
-    for byte in IPv4Address(src_ip).packed + IPv4Address(dst_ip).packed + dst_port.to_bytes(2, "big"):
-        value = ((value ^ byte) * 0x01000193) & 0xFFFFFFFF
+def ubf_index(src_ip, dst_ip, dst_port, size, algorithm=DEFAULT_HASH_ALGORITHM):
+    data = IPv4Address(src_ip).packed + IPv4Address(dst_ip).packed + dst_port.to_bytes(2, "big")
+    value = HASH_FUNCTIONS[algorithm](data)
     return value % size if size else 0
 
 
@@ -47,10 +44,10 @@ def observed_sources(directory, metadata):
     return observed
 
 
-def index_distribution(sources, size):
+def index_distribution(sources, size, algorithm=DEFAULT_HASH_ALGORITHM):
     buckets = defaultdict(lambda: {"client": set(), "attack": set()})
     for kind, source in sources:
-        buckets[hash_flow(source, "203.0.113.2", 80, size)][kind].add(source)
+        buckets[ubf_index(source, "203.0.113.2", 80, size, algorithm)][kind].add(source)
     indices = []
     for index in range(size):
         bucket = buckets[index]
@@ -85,7 +82,10 @@ def prepare_histogram(args, rows, runs, directory):
         records.append(dict(
             run=metadata["id"], repetition=metadata["repetition"],
             ubf_size=metadata["ubf_size"], quality=quality, sources=sources,
+            hash_algorithm=metadata.get("hash_algorithm", "fnv1a"),
         ))
+    if len({record["hash_algorithm"] for record in records}) > 1:
+        raise ValueError("Cannot combine different hash algorithms in one histogram")
     by_repetition = defaultdict(list)
     for record in records:
         if record["quality"] == "ok":
@@ -97,11 +97,11 @@ def prepare_histogram(args, rows, runs, directory):
                 record["quality"] = "inconsistent_sources_across_sizes"
     index_rows, histogram_rows = [], []
     for record in records:
-        common = {key: record[key] for key in ("run", "repetition", "ubf_size", "quality")}
+        common = {key: record[key] for key in ("run", "repetition", "ubf_size", "hash_algorithm", "quality")}
         if record["quality"] != "ok":
             histogram_rows.append(dict(**common, origins_per_index=None, category=None, indices=None))
             continue
-        indices, bins, metrics = index_distribution(record["sources"], record["ubf_size"])
+        indices, bins, metrics = index_distribution(record["sources"], record["ubf_size"], record["hash_algorithm"])
         record.update(bins=bins, **metrics)
         index_rows.extend(dict(**common, **entry) for entry in indices)
         # Include zero-valued bins so exported repetitions share the same interpretation.
@@ -116,7 +116,7 @@ def prepare_histogram(args, rows, runs, directory):
         write_csv(directory / "ubf_indices.csv", index_rows)
     else:
         write_csv(directory / "ubf_indices.csv", [], fields=[
-            "run", "repetition", "UBF_SIZE", "quality", "index", "clients", "attackers",
+            "run", "repetition", "UBF_SIZE", "hash_algorithm", "quality", "index", "clients", "attackers",
             "origins", "category", "client_sources", "attacker_sources",
         ])
     write_csv(directory / "ubf_histogram.csv", histogram_rows)
@@ -125,6 +125,8 @@ def prepare_histogram(args, rows, runs, directory):
 
 def aggregate_histogram(records, sizes):
     """Average per-run bucket counts, never pool sources across repetitions."""
+    if len({r["hash_algorithm"] for r in records}) > 1:
+        raise ValueError("Cannot aggregate different hash algorithms in one histogram")
     groups = []
     for size in sizes:
         valid = [r for r in records if r["ubf_size"] == size and r["quality"] == "ok"]

@@ -33,6 +33,8 @@ def parse(argv=None):
     )
     required = p.add_argument_group("Required")
     optional = p.add_argument_group("Optional")
+    optional.add_argument("--hash-algorithm", choices=("fnv1a", "murmur3", "halfsiphash"),
+                          default="halfsiphash", help="Hash algorithm (default: halfsiphash)")
     names = {
         "epoch_ms": "--epoch-time-ms",
         "threshold": "--syn-count-block-threshold",
@@ -152,6 +154,8 @@ def cases_for(args):
         cases.extend(block)
     for i, case in enumerate(cases, 1):
         case["id"] = f"{i:04d}-r{case['repetition']}"
+    for case in cases:
+        case["hash_algorithm"] = args.hash_algorithm
     return cases
 
 

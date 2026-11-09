@@ -1,6 +1,11 @@
 use aya_ebpf::{bindings::xdp_action, helpers::bpf_ktime_get_ns, macros::map, maps::Array};
 use syn_flood_detect_common::{FirewallConfig, UBF_ENTRIES, UpdatableBloomFilter};
 
+use syn_flood_detect_common::hashing::{
+    HASH_FNV1A, HASH_HALFSIPHASH, HASH_MURMUR3, fnv1a_32, halfsiphash_2_4_32, murmur3_x86_32,
+    service_key,
+};
+
 use crate::packet::{Packet, PacketKind};
 
 #[map]
@@ -8,7 +13,13 @@ static UBF_ARRAY: Array<UpdatableBloomFilter> = Array::with_max_entries(UBF_ENTR
 
 #[inline(always)]
 pub fn filter(packet: &Packet, config: &FirewallConfig) -> u32 {
-    if config.ubf_size == 0 || config.ubf_size > UBF_ENTRIES {
+    if config.ubf_size == 0
+        || config.ubf_size > UBF_ENTRIES
+        || !matches!(
+            config.hash_algorithm,
+            HASH_FNV1A | HASH_MURMUR3 | HASH_HALFSIPHASH
+        )
+    {
         return xdp_action::XDP_ABORTED;
     }
     match packet.kind {
@@ -39,12 +50,19 @@ fn process_tcp(packet: &Packet, config: &FirewallConfig) -> u32 {
     if flags == TcpAction::Ignore {
         return xdp_action::XDP_PASS;
     }
-    let index = hash_flow(
-        packet.src_ip,
-        packet.dst_ip,
-        packet.dst_port.to_be(),
-        config.ubf_size,
-    );
+    let key = service_key(packet.src_ip, packet.dst_ip, packet.dst_port);
+    let hash = match config.hash_algorithm {
+        HASH_FNV1A => fnv1a_32(&key),
+        HASH_MURMUR3 => murmur3_x86_32(&key),
+        HASH_HALFSIPHASH => halfsiphash_2_4_32(&key),
+        _ => return xdp_action::XDP_ABORTED,
+    };
+    // Local guard prevents a panic path in eBPF even if this function is reused.
+    let index = if config.ubf_size == 0 {
+        return xdp_action::XDP_ABORTED;
+    } else {
+        hash % config.ubf_size
+    };
     match flags {
         TcpAction::Syn => process_syn(index, config),
         TcpAction::Ack => {
@@ -96,34 +114,4 @@ fn acknowledge(entry: UpdatableBloomFilter) -> Option<UpdatableBloomFilter> {
         counter: 0,
         timestamp: 0,
     })
-}
-
-#[inline(always)]
-pub fn hash_flow(src_ip: [u8; 4], dst_ip: [u8; 4], dst_port: u16, max_entries: u32) -> u32 {
-    const FNV_OFFSET_BASIS: u32 = 0x811c_9dc5;
-    const FNV_PRIME: u32 = 0x0100_0193;
-
-    let mut hash = FNV_OFFSET_BASIS;
-
-    for byte in src_ip {
-        hash ^= byte as u32;
-        hash = hash.wrapping_mul(FNV_PRIME);
-    }
-
-    for byte in dst_ip {
-        hash ^= byte as u32;
-        hash = hash.wrapping_mul(FNV_PRIME);
-    }
-
-    hash ^= (dst_port as u32) & 0xff;
-    hash = hash.wrapping_mul(FNV_PRIME);
-    hash ^= ((dst_port as u32) >> 8) & 0xff;
-    hash = hash.wrapping_mul(FNV_PRIME);
-
-    // Keep the zero check local: no Rust panic path may be emitted into eBPF.
-    if max_entries == 0 {
-        0
-    } else {
-        hash % max_entries
-    }
 }

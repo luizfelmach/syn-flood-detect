@@ -12,6 +12,7 @@ PARAMS = (
     "epoch_ms",
     "threshold",
     "ubf_size",
+    "hash_algorithm",
     "clients",
     "client_interval",
     "attackers",
@@ -58,6 +59,8 @@ def analyze_run(directory):
     m = json.loads((directory / "run.json").read_text())
     m["ubf_size_assumed"] = "ubf_size" not in m
     m.setdefault("ubf_size", 2048)
+    # Historical collections predate selectable hashes.
+    m.setdefault("hash_algorithm", "fnv1a")
     if m["status"] != "complete":
         raise ValueError(f"Incomplete run: {m['status']}")
     start, end = m["start_ns"], m["end_ns"]

@@ -13,7 +13,7 @@ from .presentation import preflight, show_png
 from .progress import report
 
 CACHE_ROOT = ROOT / "results" / "analysis" / "cache"
-CACHE_VERSION = 2
+CACHE_VERSION = 3
 
 
 def argument_values(parser, args):

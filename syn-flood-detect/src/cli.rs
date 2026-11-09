@@ -6,7 +6,7 @@ use std::{
 use clap::{Args, Parser, Subcommand};
 use syn_flood_detect_common::{FirewallConfig, UBF_ENTRIES};
 
-use crate::control::{ConfigUpdate, Mode};
+use crate::control::{ConfigUpdate, HashAlgorithm, Mode};
 
 #[derive(Debug, Parser)]
 #[command(about = "Configure an XDP SYN flood detector and record packet decisions")]
@@ -24,7 +24,7 @@ pub enum Command {
         #[arg(value_name = "MODE")]
         packet_handling_mode: Mode,
     },
-    /// Update detector parameters without restarting. Changing UBF_SIZE clears history.
+    /// Update detector parameters without restarting. Changing UBF size or hash clears history; pause traffic for a consistent transition.
     Config(ConfigOptions),
     /// Show the running mode and detector parameters.
     Show,
@@ -51,6 +51,8 @@ pub struct RunOptions {
     syn_count_block_threshold: Option<NonZeroU32>,
     #[arg(long, value_parser = clap::value_parser!(u32).range(1..=i64::from(UBF_ENTRIES)))]
     ubf_size: Option<u32>,
+    #[arg(long, value_enum, help = "Hash algorithm (default: halfsiphash)")]
+    hash_algorithm: Option<HashAlgorithm>,
 }
 
 impl RunOptions {
@@ -59,7 +61,7 @@ impl RunOptions {
         FirewallConfig {
             packet_handling_mode: self.packet_handling_mode.value(),
             ubf_size: self.ubf_size.unwrap_or(defaults.ubf_size),
-            reserved: 0,
+            hash_algorithm: self.hash_algorithm.unwrap_or_default().value(),
             epoch_time_ms: self
                 .epoch_time_ms
                 .map(NonZeroU64::get)
@@ -81,6 +83,8 @@ pub struct ConfigOptions {
     syn_count_block_threshold: Option<NonZeroU32>,
     #[arg(long, value_parser = clap::value_parser!(u32).range(1..=i64::from(UBF_ENTRIES)))]
     ubf_size: Option<u32>,
+    #[arg(long, value_enum)]
+    hash_algorithm: Option<HashAlgorithm>,
 }
 
 impl From<ConfigOptions> for ConfigUpdate {
@@ -88,7 +92,51 @@ impl From<ConfigOptions> for ConfigUpdate {
         Self {
             epoch_time_ms: options.epoch_time_ms,
             ubf_size: options.ubf_size,
+            hash_algorithm: options.hash_algorithm,
             syn_count_block_threshold: options.syn_count_block_threshold,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use syn_flood_detect_common::hashing::*;
+
+    #[test]
+    fn defaults_and_explicit_selection() {
+        let Command::Run(run) = Cli::try_parse_from(["detector", "run"]).unwrap().command else {
+            panic!()
+        };
+        assert_eq!(run.config().hash_algorithm, HASH_HALFSIPHASH);
+        for (name, id) in [
+            ("fnv1a", HASH_FNV1A),
+            ("murmur3", HASH_MURMUR3),
+            ("halfsiphash", HASH_HALFSIPHASH),
+        ] {
+            let Command::Run(run) =
+                Cli::try_parse_from(["detector", "run", "--hash-algorithm", name])
+                    .unwrap()
+                    .command
+            else {
+                panic!()
+            };
+            assert_eq!(run.config().hash_algorithm, id);
+            let Command::Config(config) =
+                Cli::try_parse_from(["detector", "config", "--hash-algorithm", name])
+                    .unwrap()
+                    .command
+            else {
+                panic!()
+            };
+            assert_eq!(
+                ConfigUpdate::from(config).hash_algorithm.unwrap().value(),
+                id
+            );
+        }
+        assert!(
+            Cli::try_parse_from(["detector", "config", "--hash-algorithm", "invalid"]).is_err()
+        );
+        assert!(Cli::try_parse_from(["detector", "config"]).is_err());
     }
 }

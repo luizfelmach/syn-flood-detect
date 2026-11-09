@@ -18,4 +18,5 @@ until [[ -e /run/firewall-network-ready ]]; do
 done
 
 export RUST_LOG=${RUST_LOG:-info}
-exec /usr/local/bin/syn-flood-detect run --iface eth1 --packet-dir /var/log/syn-flood-detect
+exec /usr/local/bin/syn-flood-detect run --iface eth1 --packet-dir /var/log/syn-flood-detect \
+    --hash-algorithm "${HASH_ALGORITHM:-halfsiphash}"

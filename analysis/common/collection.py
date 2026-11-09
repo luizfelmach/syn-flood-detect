@@ -180,13 +180,15 @@ def run_one(
             str(case["threshold"]),
             "--ubf-size",
             str(case["ubf_size"]),
+            "--hash-algorithm",
+            case["hash_algorithm"],
         )
         control(prefix, "reset")
         control(prefix, "mode", case["mode"])
         metadata["config"] = control(prefix, "show")
         fields = dict(
             re.findall(
-                r"(mode|epoch_time_ms|syn_count_block_threshold|ubf_size)=(\w+)",
+                r"(mode|epoch_time_ms|syn_count_block_threshold|ubf_size|hash_algorithm)=(\w+)",
                 metadata["config"],
             )
         )
@@ -195,6 +197,7 @@ def run_one(
             epoch_time_ms=str(case["epoch_ms"]),
             syn_count_block_threshold=str(case["threshold"]),
             ubf_size=str(case["ubf_size"]),
+            hash_algorithm=case["hash_algorithm"],
         )
         if any(fields.get(k) != v for k, v in expected.items()):
             raise RuntimeError(
