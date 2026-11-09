@@ -28,7 +28,9 @@ ANALYSIS_TARGETS := analysis-threshold-first-drop \
 	analysis-histogram-ubf \
 	analysis-time-series \
 	analysis-hash-comparison \
-	analysis-hash-comparison-primes
+	analysis-hash-comparison-primes \
+	analysis-halfsiphash-ubf-sweep \
+	analysis-hash-avalanche
 
 .PHONY: help build deploy destroy graph client attack mode config show reset analysis save download $(ANALYSIS_TARGETS)
 
@@ -175,9 +177,15 @@ analysis-hash-comparison-primes: ANALYSIS_ARGS = --ubf-size 8191 \
 	--sources 100,200,250,300,400,500,600,700,800,900,1000,1100,1200,1300,1400,1500,1600,1700,1800,1900,2000 --attacker-percent 50 \
 	--repetitions 5
 
+analysis-halfsiphash-ubf-sweep: ANALYSIS_ARGS = --ubf-center 4096 --ubf-radius 20 \
+	--sources 2000 --attacker-percent 50 \
+	--repetitions 200
+
+analysis-hash-avalanche: ANALYSIS_ARGS = --sources 2000 --attacker-percent 50
+
 $(ANALYSIS_TARGETS):
 	$(validate_hash)
 	@nix-shell analysis/shell.nix --run 'set -eu; \
 		mkdir -p results/analysis; \
-		python3 analysis/$(subst -,_,$(patsubst analysis-%,%,$@)).py $(ANALYSIS_ARGS) $(if $(filter-out analysis-hash-comparison analysis-hash-comparison-primes,$@),--hash-algorithm "$(HASH_ALGORITHM)") \
+		python3 analysis/$(subst -,_,$(patsubst analysis-%,%,$@)).py $(ANALYSIS_ARGS) $(if $(filter-out analysis-hash-comparison analysis-hash-comparison-primes analysis-halfsiphash-ubf-sweep analysis-hash-avalanche,$@),--hash-algorithm "$(HASH_ALGORITHM)") \
 			--out "results/analysis/$(subst -,_,$(patsubst analysis-%,%,$@)).png"'
