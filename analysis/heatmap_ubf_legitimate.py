@@ -34,13 +34,13 @@ def parse(argv=None):
     optional.add_argument("--hash-algorithm", choices=("fnv1a", "murmur3", "halfsiphash"),
                           default="halfsiphash", help="Hash algorithm (default: halfsiphash)")
     names = {
-        "epoch_ms": "--epoch-time-ms",
+        "idle_timeout_ms": "--idle-timeout-ms",
         "threshold": "--syn-count-block-threshold",
         "ubf_size": "--ubf-size",
         "sources": "--sources",
     }
     required.add_argument(
-        "--epoch-time-ms", dest="epoch_ms", metavar="VALUE", help="2000"
+        "--idle-timeout-ms", dest="idle_timeout_ms", metavar="VALUE", help="2000"
     )
     required.add_argument(
         "--syn-count-block-threshold",
@@ -96,7 +96,7 @@ def parse(argv=None):
         try:
             numbers = sorted(set((int(v) for v in getattr(args, field).split(","))))
             maximum = {
-                "epoch_ms": 18446744073709551615,
+                "idle_timeout_ms": 18446744073709551615,
                 "threshold": 4294967295,
                 "ubf_size": 8192,
                 "sources": 19998,
@@ -105,7 +105,7 @@ def parse(argv=None):
                 raise ValueError()
         except ValueError:
             p.error(f"{flag}: expected positive integers within detector capacity")
-        if field in ("epoch_ms", "threshold") and len(numbers) != 1:
+        if field in ("idle_timeout_ms", "threshold") and len(numbers) != 1:
             p.error(f"{flag} accepts only one value for this figure")
         setattr(args, field, numbers)
     for field in ("duration", "client_interval", "attack_interval"):
@@ -151,15 +151,15 @@ def cases_for(args):
     cases = []
     for rep in range(1, args.repetitions + 1):
         block = []
-        for epoch, threshold, size, total in itertools.product(
-            args.epoch_ms, args.threshold, args.ubf_size, args.sources
+        for idle_timeout, threshold, size, total in itertools.product(
+            args.idle_timeout_ms, args.threshold, args.ubf_size, args.sources
         ):
             clients, attackers = source_counts(total, args.attacker_percent)
             seed = args.seed + rep * 1000 + 60
             block.append(
                 dict(
                     scenario=6,
-                    epoch_ms=epoch,
+                    idle_timeout_ms=idle_timeout,
                     threshold=threshold,
                     ubf_size=size,
                     clients=clients,
@@ -330,7 +330,7 @@ def collect(args, cases, directory):
                     f"Seeds: client={case['client_seed']}, attack={case['attack_seed']}; repetition={case['repetition']}"
                 )
                 print(
-                    f"[{i}/{len(cases)}] EPOCH_TIME_MS={case['epoch_ms']} SYN_COUNT_BLOCK_THRESHOLD={case['threshold']} UBF_SIZE={case['ubf_size']} SOURCES={case['clients'] + case['attackers']} (clients={case['clients']}, attackers={case['attackers']}): shared lab",
+                    f"[{i}/{len(cases)}] IDLE_TIMEOUT_MS={case['idle_timeout_ms']} SYN_COUNT_BLOCK_THRESHOLD={case['threshold']} UBF_SIZE={case['ubf_size']} SOURCES={case['clients'] + case['attackers']} (clients={case['clients']}, attackers={case['attackers']}): shared lab",
                     flush=True,
                 )
                 run_dir = directory / case["id"]
@@ -399,7 +399,7 @@ def main(argv=None):
     cases = cases_for(args)
     print("Experiment configuration:", flush=True)
     for name, value in [
-        ("EPOCH_TIME_MS (ms)", args.epoch_ms),
+        ("IDLE_TIMEOUT_MS (ms)", args.idle_timeout_ms),
         ("SYN_COUNT_BLOCK_THRESHOLD", args.threshold),
         ("UBF_SIZE", args.ubf_size),
         ("SOURCES (clients + attackers)", args.sources),

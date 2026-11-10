@@ -129,7 +129,7 @@ class SynQueueTests(unittest.TestCase):
         self.assertIn("512", left.texts[0].get_text())
 
     def test_filter_and_allow_have_identical_traffic_and_seeds(self):
-        args = parse(["--epoch-time-ms", "500", "--syn-count-block-threshold", "3",
+        args = parse(["--idle-timeout-ms", "500", "--syn-count-block-threshold", "3",
                       "--ubf-size", "2048", "--clients", "2", "--attackers", "1,2,3",
                       "--duration", ".325", "--client-interval", ".5", "--attack-interval", ".01",
                       "--bin-seconds", ".25", "--before", "0", "--after", "6.5"])

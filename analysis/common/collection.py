@@ -174,8 +174,8 @@ def run_one(
         control(
             prefix,
             "config",
-            "--epoch-time-ms",
-            str(case["epoch_ms"]),
+            "--idle-timeout-ms",
+            str(case["idle_timeout_ms"]),
             "--syn-count-block-threshold",
             str(case["threshold"]),
             "--ubf-size",
@@ -188,13 +188,13 @@ def run_one(
         metadata["config"] = control(prefix, "show")
         fields = dict(
             re.findall(
-                r"(mode|epoch_time_ms|syn_count_block_threshold|ubf_size|hash_algorithm)=(\w+)",
+                r"(mode|idle_timeout_ms|syn_count_block_threshold|ubf_size|hash_algorithm)=(\w+)",
                 metadata["config"],
             )
         )
         expected = dict(
             mode=case["mode"],
-            epoch_time_ms=str(case["epoch_ms"]),
+            idle_timeout_ms=str(case["idle_timeout_ms"]),
             syn_count_block_threshold=str(case["threshold"]),
             ubf_size=str(case["ubf_size"]),
             hash_algorithm=case["hash_algorithm"],

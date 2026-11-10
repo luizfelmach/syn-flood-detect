@@ -13,7 +13,9 @@ from .presentation import preflight, show_png
 from .progress import report
 
 CACHE_ROOT = ROOT / "results" / "analysis" / "cache"
-CACHE_VERSION = 3
+# Version 4 uses idle_timeout_ms and decrements positive counters on every ACK.
+# Earlier collections describe a different detector and must not be reused.
+CACHE_VERSION = 4
 
 
 def argument_values(parser, args):

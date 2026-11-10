@@ -45,8 +45,8 @@ pub struct RunOptions {
         default_value = "filter"
     )]
     packet_handling_mode: Mode,
-    #[arg(long)]
-    epoch_time_ms: Option<NonZeroU64>,
+    #[arg(long, help = "SYN inactivity timeout in milliseconds (default: 2000)")]
+    idle_timeout_ms: Option<NonZeroU64>,
     #[arg(long)]
     syn_count_block_threshold: Option<NonZeroU32>,
     #[arg(long, value_parser = clap::value_parser!(u32).range(1..=i64::from(UBF_ENTRIES)))]
@@ -62,10 +62,10 @@ impl RunOptions {
             packet_handling_mode: self.packet_handling_mode.value(),
             ubf_size: self.ubf_size.unwrap_or(defaults.ubf_size),
             hash_algorithm: self.hash_algorithm.unwrap_or_default().value(),
-            epoch_time_ms: self
-                .epoch_time_ms
+            idle_timeout_ms: self
+                .idle_timeout_ms
                 .map(NonZeroU64::get)
-                .unwrap_or(defaults.epoch_time_ms),
+                .unwrap_or(defaults.idle_timeout_ms),
             syn_count_block_threshold: self
                 .syn_count_block_threshold
                 .map(NonZeroU32::get)
@@ -77,8 +77,8 @@ impl RunOptions {
 #[derive(Debug, Args)]
 #[group(required = true, multiple = true)]
 pub struct ConfigOptions {
-    #[arg(long)]
-    epoch_time_ms: Option<NonZeroU64>,
+    #[arg(long, help = "SYN inactivity timeout in milliseconds")]
+    idle_timeout_ms: Option<NonZeroU64>,
     #[arg(long)]
     syn_count_block_threshold: Option<NonZeroU32>,
     #[arg(long, value_parser = clap::value_parser!(u32).range(1..=i64::from(UBF_ENTRIES)))]
@@ -90,7 +90,7 @@ pub struct ConfigOptions {
 impl From<ConfigOptions> for ConfigUpdate {
     fn from(options: ConfigOptions) -> Self {
         Self {
-            epoch_time_ms: options.epoch_time_ms,
+            idle_timeout_ms: options.idle_timeout_ms,
             ubf_size: options.ubf_size,
             hash_algorithm: options.hash_algorithm,
             syn_count_block_threshold: options.syn_count_block_threshold,
@@ -100,8 +100,40 @@ impl From<ConfigOptions> for ConfigUpdate {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use syn_flood_detect_common::hashing::*;
+
+    use super::*;
+
+    #[test]
+    fn idle_timeout_is_configurable_at_startup_and_runtime() {
+        let Command::Run(defaults) = Cli::try_parse_from(["detector", "run"]).unwrap().command
+        else {
+            panic!()
+        };
+        assert_eq!(defaults.config().idle_timeout_ms, 2000);
+        let Command::Run(run) =
+            Cli::try_parse_from(["detector", "run", "--idle-timeout-ms", "500"])
+                .unwrap()
+                .command
+        else {
+            panic!()
+        };
+        assert_eq!(run.config().idle_timeout_ms, 500);
+        let Command::Config(config) =
+            Cli::try_parse_from(["detector", "config", "--idle-timeout-ms", "750"])
+                .unwrap()
+                .command
+        else {
+            panic!()
+        };
+        assert_eq!(
+            ConfigUpdate::from(config).idle_timeout_ms.unwrap().get(),
+            750
+        );
+        for command in ["run", "config"] {
+            assert!(Cli::try_parse_from(["detector", command, "--idle-timeout-ms", "0"]).is_err());
+        }
+    }
 
     #[test]
     fn defaults_and_explicit_selection() {

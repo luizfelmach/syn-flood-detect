@@ -28,7 +28,8 @@ unsafe impl Pod for UpdatableBloomFilter {}
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct FirewallConfig {
-    pub epoch_time_ms: u64,
+    /// Reset a bucket on the next SYN after this many milliseconds without SYNs.
+    pub idle_timeout_ms: u64,
     pub syn_count_block_threshold: u32,
     pub packet_handling_mode: u32,
     pub ubf_size: u32,
@@ -38,7 +39,7 @@ pub struct FirewallConfig {
 impl Default for FirewallConfig {
     fn default() -> Self {
         Self {
-            epoch_time_ms: 2000,
+            idle_timeout_ms: 2000,
             syn_count_block_threshold: 3,
             packet_handling_mode: MODE_FILTER,
             ubf_size: DEFAULT_UBF_SIZE,

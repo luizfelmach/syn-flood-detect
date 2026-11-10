@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Plot counter reset behavior across EPOCH_TIME_MS."""
+"""Plot attacker SYN drop rates across IDLE_TIMEOUT_MS and SYN_COUNT_BLOCK_THRESHOLD."""
 
 import argparse
 import hashlib
@@ -14,18 +14,17 @@ import signal
 import subprocess
 import sys
 import time
-from statistics import median
 from common.cache import argument_values, execute_cached
 from common.collection import ROOT, command, run_one, save
 from common.lab import fresh_lab
-from common.metrics import COLORS, analyze_run, aggregate, write_csv
+from common.metrics import analyze_run, aggregate, write_csv
 from common.progress import report
 from common.presentation import SingleLineHelpFormatter, preflight
 
 
 def parse(argv=None):
     p = argparse.ArgumentParser(
-        description="Plot counter reset behavior across EPOCH_TIME_MS. Identical arguments reuse the last valid collection; otherwise combinations share one isolated lab with a reset between runs.",
+        description="Plot attacker SYN drop rates across IDLE_TIMEOUT_MS and SYN_COUNT_BLOCK_THRESHOLD. Identical arguments reuse the last valid collection; otherwise combinations share one isolated lab with a reset between runs.",
         usage=argparse.SUPPRESS,
         add_help=False,
         formatter_class=SingleLineHelpFormatter,
@@ -35,15 +34,18 @@ def parse(argv=None):
     optional.add_argument("--hash-algorithm", choices=("fnv1a", "murmur3", "halfsiphash"),
                           default="halfsiphash", help="Hash algorithm (default: halfsiphash)")
     names = {
-        "epoch_ms": "--epoch-time-ms",
+        "idle_timeout_ms": "--idle-timeout-ms",
         "threshold": "--syn-count-block-threshold",
         "ubf_size": "--ubf-size",
     }
     required.add_argument(
-        "--epoch-time-ms", dest="epoch_ms", metavar="VALUES", help="250,1000,2000"
+        "--idle-timeout-ms", dest="idle_timeout_ms", metavar="VALUES", help="250,1000,2000"
     )
     required.add_argument(
-        "--syn-count-block-threshold", dest="threshold", metavar="VALUE", help="3"
+        "--syn-count-block-threshold",
+        dest="threshold",
+        metavar="VALUES",
+        help="3,10,50",
     )
     required.add_argument("--ubf-size", dest="ubf_size", metavar="VALUE", help="2048")
     required.add_argument("--clients", type=int, help="5")
@@ -51,7 +53,7 @@ def parse(argv=None):
     required.add_argument("--duration", type=float, metavar="SECONDS", help="25")
     required.add_argument("--client-interval", type=float, metavar="SECONDS", help="1")
     required.add_argument(
-        "--attack-interval", metavar="SECONDS", help="0.05,0.1,0.2 (one curve per interval)"
+        "--attack-interval", type=float, metavar="SECONDS", help="0.1"
     )
     optional.add_argument(
         "--repetitions", type=int, default=1, metavar="COUNT", help="1"
@@ -88,7 +90,7 @@ def parse(argv=None):
         try:
             numbers = sorted(set((int(v) for v in getattr(args, field).split(","))))
             maximum = {
-                "epoch_ms": 18446744073709551615,
+                "idle_timeout_ms": 18446744073709551615,
                 "threshold": 4294967295,
                 "ubf_size": 8192,
             }[field]
@@ -96,17 +98,10 @@ def parse(argv=None):
                 raise ValueError()
         except ValueError:
             p.error(f"{flag}: expected positive integers within detector capacity")
-        if field != "epoch_ms" and len(numbers) != 1:
+        if field != "idle_timeout_ms" and (not field == "threshold") and (len(numbers) != 1):
             p.error(f"{flag} accepts only one value for this figure")
         setattr(args, field, numbers)
-    try:
-        intervals = [float(v) for v in args.attack_interval.split(",")]
-        if any(not math.isfinite(v) or v <= 0 for v in intervals):
-            raise ValueError()
-    except ValueError:
-        p.error("--attack-interval: expected comma-separated finite positive seconds")
-    args.attack_interval = sorted(set(intervals))
-    for field in ("duration", "client_interval"):
+    for field in ("duration", "client_interval", "attack_interval"):
         value = getattr(args, field, None)
         if value is not None and (not math.isfinite(value) or value <= 0):
             p.error(f"{flag_for(field)} must be finite and positive")
@@ -120,13 +115,9 @@ def parse(argv=None):
         p.error("--image must name an existing local image")
     args._cache_arguments = argument_values(p, args)
     args.ready_timeout = 300
-    args.title, args.xlabel, args.ylabel = (
-        "Efeito do tempo de expiração no bloqueio de SYNs atacantes",
-        None,
-        None,
-    )
+    args.title, args.xlabel, args.ylabel = ("Bloqueio de SYNs atacantes", None, None)
     args.xlim, args.ylim = (None, None)
-    args.figsize, args.dpi = ([7.2, 4.5], 200)
+    args.figsize, args.dpi = ([8, 6.5], 200)
     args.xscale, args.yscale = ("linear", "linear")
     args.cmap, args.vmin, args.vmax = ("Blues", 0, 100)
     return args
@@ -136,20 +127,20 @@ def cases_for(args):
     cases = []
     for rep in range(1, args.repetitions + 1):
         block = []
-        for epoch, threshold, size, interval in itertools.product(
-            args.epoch_ms, args.threshold, args.ubf_size, args.attack_interval
+        for idle_timeout, threshold, size in itertools.product(
+            args.idle_timeout_ms, args.threshold, args.ubf_size
         ):
-            seed = args.seed + rep * 1000 + 30
+            seed = args.seed + rep * 1000 + 40
             block.append(
                 dict(
-                    scenario=3,
-                    epoch_ms=epoch,
+                    scenario=4,
+                    idle_timeout_ms=idle_timeout,
                     threshold=threshold,
                     ubf_size=size,
                     clients=args.clients,
                     attackers=args.attackers,
                     client_interval=args.client_interval,
-                    attack_interval=interval,
+                    attack_interval=args.attack_interval,
                     mode="filter",
                     repetition=rep,
                     client_seed=seed,
@@ -167,9 +158,8 @@ def cases_for(args):
 
 def render(args, rows, output):
     import matplotlib.pyplot as plt
+    import numpy as np
     from matplotlib.figure import Figure
-    from matplotlib.lines import Line2D
-    from matplotlib.ticker import MaxNLocator, AutoMinorLocator
     from matplotlib.backends.backend_agg import FigureCanvasAgg
 
     plt.rcParams.update(
@@ -189,107 +179,60 @@ def render(args, rows, output):
     FigureCanvasAgg(fig)
     ax = fig.subplots()
     groups = aggregate(rows)
-    xlabel = "EPOCH_TIME_MS (ms)"
+    xlabel = "IDLE_TIMEOUT_MS (ms)"
     ylabel = "SYNs atacantes descartados (%)"
-    lookup = {(g["epoch_ms"], g["attack_interval"]): g for g in groups}
-    xs = args.epoch_ms
-    references, legend_handles = [], []
-    for index, interval in enumerate(args.attack_interval):
-        color = COLORS[index % len(COLORS)]
-        ys = [lookup.get((x, interval), {}).get("attack_drop_pct") for x in xs]
-        values = [value if value is not None else math.nan for value in ys]
-        ax.plot(xs, values, color=color, linewidth=1.5,
-                marker="o", markersize=4, markerfacecolor=color)
-        legend_handles.append(Line2D(
-            [], [], color=color, linewidth=1.5,
-            marker="o", markersize=4, markerfacecolor=color,
-            label=f"attack interval: {interval * 1000:g}ms".replace(".", ","),
-        ))
-        for x, value in zip(xs, ys):
-            if value is None:
-                ax.annotate(
-                    "N/A",
-                    xy=(x, 0.03),
-                    xycoords=ax.get_xaxis_transform(),
-                    xytext=(0, index * 10),
-                    textcoords="offset points",
-                    ha="center",
-                    fontsize=8,
-                    color=color,
-                )
-            elif args.repetitions > 1:
-                g = lookup[x, interval]
-                ax.errorbar(
-                    [x],
-                    [value],
-                    yerr=[
-                        [value - g["attack_drop_pct_min"]],
-                        [g["attack_drop_pct_max"] - value],
-                    ],
-                    color=color,
-                    capsize=3,
-                    linewidth=0.8,
-                )
-        observed = [
-            g["observed_syn_interval_ms"]
-            for g in groups
-            if g["attack_interval"] == interval
-            and g["observed_syn_interval_ms"] is not None
-        ]
-        if observed:
-            value = median(observed)
-            ax.axvline(value, color=color, linestyle="--", linewidth=0.8, alpha=0.8)
-            references.append((value, color))
-    ax.set_xlim(min(xs) - 5, max(xs) + 5)
-    if args.yscale == "linear":
-        ax.set_ylim(-2, 102)
-    for axis in ("x", "y"):
-        scale = getattr(args, axis + "scale")
-        if scale == "log":
-            for line in ax.lines:
-                values = line.get_xdata() if axis == "x" else line.get_ydata()
-                if any((math.isfinite(float(v)) and v <= 0 for v in values)):
-                    raise ValueError(
-                        f"Log axis {axis} contains zero or negative values; use --{axis}scale linear. Collected data are preserved."
-                    )
-        getattr(ax, "set_" + axis + "scale")(scale)
-        if getattr(args, axis + "lim"):
-            getattr(ax, "set_" + axis + "lim")(getattr(args, axis + "lim"))
-    ax.xaxis.set_major_locator(MaxNLocator(nbins=10, steps=[1, 2, 2.5, 5, 10]))
-    ax.xaxis.set_minor_locator(AutoMinorLocator(5))
-    ax.spines[["top", "right"]].set_visible(False)
-    ax.grid(axis="y", color=".88", linewidth=0.5)
-    ax.legend(
-        handles=legend_handles,
-        loc="upper center", bbox_to_anchor=(0.5, -0.16),
-        ncol=min(3, len(legend_handles)),
+    xs, ys = (getattr(args, "idle_timeout_ms"), args.threshold)
+    cells = {(g["idle_timeout_ms"], g["threshold"]): g for g in groups}
+    data = np.array(
+        [
+            [cells.get((x, y), {}).get("attack_drop_pct", np.nan) for x in xs]
+            for y in ys
+        ],
+        dtype=float,
     )
-    left, right = ax.get_xlim()
-    visible_references = [(value, color) for value, color in sorted(references)
-                          if left <= value <= right]
-    for index, (value, color) in enumerate(visible_references):
-        position = (value - left) / (right - left)
-        height = 0.72 - 0.4 * index / max(1, len(visible_references) - 1)
-        to_right = position < 0.55
-        ax.annotate(
-            f"Limiar de bloqueio: {value:.1f}ms".replace(".", ","),
-            xy=(value, height + 0.09), xycoords=ax.get_xaxis_transform(),
-            xytext=(position + (0.05 if to_right else -0.05), height),
-            textcoords="axes fraction",
-            ha="left" if to_right else "right", va="center",
-            color=color, fontsize=8,
-            bbox=dict(facecolor="white", edgecolor="none", alpha=0.9, pad=2),
-            arrowprops=dict(arrowstyle="-", color=color, linewidth=0.8,
-                            shrinkA=3, shrinkB=0),
-        )
-    ax.set(xlabel=args.xlabel or xlabel, ylabel=args.ylabel or ylabel)
-    ax.set_title(args.title, pad=12)
+    cmap = plt.get_cmap(args.cmap).copy()
+    cmap.set_bad("#eeeeee")
+    im = ax.imshow(
+        data,
+        origin="lower",
+        aspect="auto",
+        interpolation="none",
+        cmap=cmap,
+        vmin=args.vmin,
+        vmax=args.vmax,
+    )
+    ax.set_xticks(range(len(xs)), xs)
+    ax.set_yticks(range(len(ys)), ys)
+    ylabel = "SYN_COUNT_BLOCK_THRESHOLD"
+    for j, y in enumerate(ys):
+        for i, x in enumerate(xs):
+            v = data[j, i]
+            color = cmap(im.norm(v)) if math.isfinite(v) else (1, 1, 1, 1)
+            luminance = 0.2126 * color[0] + 0.7152 * color[1] + 0.0722 * color[2]
+            ax.text(
+                i,
+                j,
+                f"{v:.1f}" if math.isfinite(v) else "N/A",
+                ha="center",
+                va="center",
+                color="black" if luminance > 0.5 else "white",
+                fontsize=9,
+            )
+    fig.colorbar(im, ax=ax, label="SYNs descartados (%)", shrink=0.9)
+    for axis, values in [("x", xs), ("y", ys)]:
+        limits = getattr(args, axis + "lim")
+        if limits:
+            selected = [i for i, v in enumerate(values) if limits[0] <= v <= limits[1]]
+            if not selected:
+                raise ValueError(f"{axis}lim does not include any sampled values")
+            getattr(ax, "set_" + axis + "lim")(min(selected) - 0.5, max(selected) + 0.5)
+    ax.set(title=args.title, xlabel=args.xlabel or xlabel, ylabel=args.ylabel or ylabel)
     output.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(output, dpi=args.dpi, format="png")
 
 
 def execute(args, cases):
-    execute_cached("epoch_boundary", args, cases, collect, render)
+    execute_cached("heatmap_idle_timeout_attack", args, cases, collect, render)
 
 
 def collect(args, cases, directory):
@@ -312,7 +255,7 @@ def collect(args, cases, directory):
         f"PNG destination: {(args.out.resolve() if args.out else directory / 'figure.png')}"
     )
     manifest = dict(
-        kind="epoch_boundary",
+        kind="heatmap_idle_timeout_attack",
         status="running",
         command=[sys.executable, *sys.argv],
         options={
@@ -363,7 +306,7 @@ def collect(args, cases, directory):
                     f"Seeds: client={case['client_seed']}, attack={case['attack_seed']}; repetition={case['repetition']}"
                 )
                 print(
-                    f"[{i}/{len(cases)}] EPOCH_TIME_MS={case['epoch_ms']} SYN_COUNT_BLOCK_THRESHOLD={case['threshold']} UBF_SIZE={case['ubf_size']} attack-interval={case['attack_interval']:g}s: shared lab",
+                    f"[{i}/{len(cases)}] IDLE_TIMEOUT_MS={case['idle_timeout_ms']} SYN_COUNT_BLOCK_THRESHOLD={case['threshold']} UBF_SIZE={case['ubf_size']}: shared lab",
                     flush=True,
                 )
                 run_dir = directory / case["id"]
@@ -432,13 +375,13 @@ def main(argv=None):
     cases = cases_for(args)
     print("Experiment configuration:", flush=True)
     for name, value in [
-        ("EPOCH_TIME_MS (ms)", args.epoch_ms),
+        ("IDLE_TIMEOUT_MS (ms)", args.idle_timeout_ms),
         ("SYN_COUNT_BLOCK_THRESHOLD", args.threshold),
         ("UBF_SIZE", args.ubf_size),
         ("Legitimate sources", args.clients),
         ("Attacker sources", args.attackers),
         ("Client interval (s)", args.client_interval),
-        ("Attack intervals (s)", args.attack_interval),
+        ("Attack interval (s)", args.attack_interval),
         ("Measurement duration (s)", args.duration),
         ("Repetitions", args.repetitions),
         ("Seed", args.seed),

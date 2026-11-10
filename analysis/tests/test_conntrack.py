@@ -105,7 +105,7 @@ class ConntrackTests(unittest.TestCase):
             conntrack_series(self.directory, self.metadata, .5)
 
     def test_experiments_match_server_ramp_and_have_a_separate_cache(self):
-        argv = ["--epoch-time-ms", "500", "--syn-count-block-threshold", "3", "--ubf-size", "2048",
+        argv = ["--idle-timeout-ms", "500", "--syn-count-block-threshold", "3", "--ubf-size", "2048",
                 "--clients", "2", "--attackers", "1,2,3", "--duration", ".325", "--client-interval", ".5",
                 "--attack-interval", ".01", "--bin-seconds", ".25", "--before", "0", "--after", "6.5"]
         args = parse(argv)

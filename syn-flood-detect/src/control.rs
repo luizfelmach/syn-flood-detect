@@ -113,7 +113,7 @@ impl fmt::Display for HashAlgorithm {
 pub struct Configuration {
     #[serde(rename = "mode")]
     packet_handling_mode: Mode,
-    epoch_time_ms: u64,
+    idle_timeout_ms: u64,
     syn_count_block_threshold: u32,
     ubf_size: u32,
     hash_algorithm: HashAlgorithm,
@@ -122,7 +122,7 @@ pub struct Configuration {
 impl TryFrom<FirewallConfig> for Configuration {
     type Error = anyhow::Error;
     fn try_from(config: FirewallConfig) -> anyhow::Result<Self> {
-        if config.epoch_time_ms == 0 || config.syn_count_block_threshold == 0 {
+        if config.idle_timeout_ms == 0 || config.syn_count_block_threshold == 0 {
             bail!("detector parameters must be positive");
         }
         if !(1..=UBF_ENTRIES).contains(&config.ubf_size) {
@@ -130,7 +130,7 @@ impl TryFrom<FirewallConfig> for Configuration {
         }
         Ok(Self {
             packet_handling_mode: config.packet_handling_mode.try_into()?,
-            epoch_time_ms: config.epoch_time_ms,
+            idle_timeout_ms: config.idle_timeout_ms,
             syn_count_block_threshold: config.syn_count_block_threshold,
             ubf_size: config.ubf_size,
             hash_algorithm: config.hash_algorithm.try_into()?,
@@ -143,7 +143,7 @@ impl From<Configuration> for FirewallConfig {
         Self {
             packet_handling_mode: config.packet_handling_mode.value(),
             hash_algorithm: config.hash_algorithm.value(),
-            epoch_time_ms: config.epoch_time_ms,
+            idle_timeout_ms: config.idle_timeout_ms,
             syn_count_block_threshold: config.syn_count_block_threshold,
             ubf_size: config.ubf_size,
         }
@@ -154,9 +154,9 @@ impl fmt::Display for Configuration {
     fn fmt(&self, out: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             out,
-            "mode={} epoch_time_ms={} syn_count_block_threshold={} ubf_size={} hash_algorithm={}",
+            "mode={} idle_timeout_ms={} syn_count_block_threshold={} ubf_size={} hash_algorithm={}",
             self.packet_handling_mode,
-            self.epoch_time_ms,
+            self.idle_timeout_ms,
             self.syn_count_block_threshold,
             self.ubf_size,
             self.hash_algorithm
@@ -167,7 +167,7 @@ impl fmt::Display for Configuration {
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ConfigUpdate {
-    pub epoch_time_ms: Option<NonZeroU64>,
+    pub idle_timeout_ms: Option<NonZeroU64>,
     pub syn_count_block_threshold: Option<NonZeroU32>,
     pub ubf_size: Option<u32>,
     pub hash_algorithm: Option<HashAlgorithm>,
@@ -175,17 +175,17 @@ pub struct ConfigUpdate {
 
 impl ConfigUpdate {
     fn apply(self, mut current: Configuration) -> anyhow::Result<Configuration> {
-        if self.epoch_time_ms.is_none()
+        if self.idle_timeout_ms.is_none()
             && self.syn_count_block_threshold.is_none()
             && self.ubf_size.is_none()
             && self.hash_algorithm.is_none()
         {
             bail!(
-                "provide epoch_time_ms, syn_count_block_threshold, ubf_size and/or hash_algorithm"
+                "provide idle_timeout_ms, syn_count_block_threshold, ubf_size and/or hash_algorithm"
             );
         }
-        if let Some(value) = self.epoch_time_ms {
-            current.epoch_time_ms = value.get();
+        if let Some(value) = self.idle_timeout_ms {
+            current.idle_timeout_ms = value.get();
         }
         if let Some(value) = self.syn_count_block_threshold {
             current.syn_count_block_threshold = value.get();
@@ -418,6 +418,35 @@ mod tests {
     use super::*;
 
     #[test]
+    fn idle_timeout_json_update_and_snapshot_use_the_same_field() {
+        let initial = Configuration::try_from(FirewallConfig::default()).unwrap();
+        let Request::Config(update) =
+            serde_json::from_str::<Request>(r#"{"command":"config","idle_timeout_ms":500}"#)
+                .unwrap()
+        else {
+            panic!()
+        };
+        let changed = update.apply(initial).unwrap();
+        assert_eq!(changed.idle_timeout_ms, 500);
+        assert_eq!(changed.hash_algorithm, initial.hash_algorithm);
+        assert_eq!(changed.ubf_size, initial.ubf_size);
+        assert_eq!(
+            changed.syn_count_block_threshold,
+            initial.syn_count_block_threshold
+        );
+        assert_eq!(changed.packet_handling_mode, initial.packet_handling_mode);
+        assert_eq!(
+            serde_json::to_value(changed).unwrap()["idle_timeout_ms"],
+            500
+        );
+        assert!(changed.to_string().contains("idle_timeout_ms=500"));
+        assert!(
+            serde_json::from_str::<Request>(r#"{"command":"config","idle_timeout_ms":0}"#,)
+                .is_err()
+        );
+    }
+
+    #[test]
     fn json_updates_preserve_other_parameters() {
         let initial = Configuration::try_from(FirewallConfig::default()).unwrap();
         assert_eq!(initial.hash_algorithm, HashAlgorithm::Halfsiphash);
@@ -429,7 +458,7 @@ mod tests {
             let changed = update.apply(initial).unwrap();
             assert_eq!(changed.hash_algorithm.to_string(), name);
             assert_eq!(changed.ubf_size, initial.ubf_size);
-            assert_eq!(changed.epoch_time_ms, initial.epoch_time_ms);
+            assert_eq!(changed.idle_timeout_ms, initial.idle_timeout_ms);
             assert_eq!(changed.packet_handling_mode, initial.packet_handling_mode);
             assert_eq!(
                 changed.syn_count_block_threshold,
@@ -487,7 +516,7 @@ mod tests {
                 )
                 .unwrap();
             let update = ConfigUpdate {
-                epoch_time_ms: None,
+                idle_timeout_ms: None,
                 syn_count_block_threshold: None,
                 ubf_size: None,
                 hash_algorithm: Some(algorithm),

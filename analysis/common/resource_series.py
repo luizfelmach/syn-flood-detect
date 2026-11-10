@@ -27,7 +27,7 @@ def parse(metric, argv=None, *, mode="filter", description=None, configure_parse
     )
     required = parser.add_argument_group("Required")
     optional = parser.add_argument_group("Optional")
-    required.add_argument("--epoch-time-ms", dest="epoch_ms", type=int, metavar="VALUE", help="500")
+    required.add_argument("--idle-timeout-ms", dest="idle_timeout_ms", type=int, metavar="VALUE", help="500")
     required.add_argument("--syn-count-block-threshold", dest="threshold", type=int, metavar="VALUE", help="3")
     required.add_argument("--ubf-size", type=int, metavar="VALUE", help="2048")
     required.add_argument("--clients", type=int, help="2")
@@ -55,7 +55,7 @@ def parse(metric, argv=None, *, mode="filter", description=None, configure_parse
                if getattr(args, action.dest) is None]
     if missing:
         parser.error("Missing required parameters: " + ", ".join(missing) + ". Use --help for requirements.")
-    for name, maximum, flag in (("epoch_ms", 2**64 - 1, "epoch-time-ms"),
+    for name, maximum, flag in (("idle_timeout_ms", 2**64 - 1, "idle-timeout-ms"),
                                 ("threshold", 2**32 - 1, "syn-count-block-threshold"),
                                 ("ubf_size", 8192, "ubf-size"), ("clients", 9999, "clients")):
         if not 1 <= getattr(args, name) <= maximum:
@@ -89,7 +89,7 @@ def parse(metric, argv=None, *, mode="filter", description=None, configure_parse
 
 def cases_for(args):
     return [dict(
-        scenario=2, epoch_ms=args.epoch_ms, threshold=args.threshold,
+        scenario=2, idle_timeout_ms=args.idle_timeout_ms, threshold=args.threshold,
         ubf_size=args.ubf_size, hash_algorithm=args.hash_algorithm,
         clients=args.clients, attackers=max(args.attackers), client_interval=args.client_interval,
         attack_interval=args.attack_interval, mode=args.packet_handling_mode, repetition=1,

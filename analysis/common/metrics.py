@@ -9,7 +9,7 @@ from statistics import median
 PARAMS = (
     "scenario",
     "mode",
-    "epoch_ms",
+    "idle_timeout_ms",
     "threshold",
     "ubf_size",
     "hash_algorithm",
@@ -27,7 +27,7 @@ METRICS = (
     "first_drop_median_ms",
     "never_blocked_pct",
     "observed_attack_syn_per_s",
-    "observed_gap_epoch_ratio",
+    "observed_gap_idle_timeout_ratio",
     "observed_syn_interval_ms",
     "steady_attack_drop_pct",
 )
@@ -42,7 +42,7 @@ def write_csv(path, rows, fields=None):
     if not rows and fields is None:
         return
     names = {
-        "epoch_ms": "EPOCH_TIME_MS",
+        "idle_timeout_ms": "IDLE_TIMEOUT_MS",
         "threshold": "SYN_COUNT_BLOCK_THRESHOLD",
         "ubf_size": "UBF_SIZE",
     }
@@ -110,7 +110,7 @@ def analyze_run(directory):
                 if action == "PASS":
                     origin_pass[ip] += 1
                 if ip in last:
-                    gaps.append((t - last[ip]) / 1e6 / m["epoch_ms"])
+                    gaps.append((t - last[ip]) / 1e6 / m["idle_timeout_ms"])
                 last[ip] = t
                 if action == "DROP" and ip not in first_drop:
                     first_drop[ip] = t
@@ -175,8 +175,8 @@ def analyze_run(directory):
         first_drop_median_ms=median(times) if times else None,
         never_blocked_pct=pct(len(first) - len(first_drop), len(first)),
         observed_attack_syn_per_s=attack_total / duration if m["attackers"] else None,
-        observed_gap_epoch_ratio=median(gaps) if gaps else None,
-        observed_syn_interval_ms=median(gaps) * m["epoch_ms"] if gaps else None,
+        observed_gap_idle_timeout_ratio=median(gaps) if gaps else None,
+        observed_syn_interval_ms=median(gaps) * m["idle_timeout_ms"] if gaps else None,
         steady_attack_drop_pct=pct(steady["attack", "DROP"], total(steady, "attack")),
         events_lost=deltas["events_lost"],
         aborted=deltas["aborted"],

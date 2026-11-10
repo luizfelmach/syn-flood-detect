@@ -96,7 +96,7 @@ class ResourceTests(unittest.TestCase):
             self.bins()
 
     def test_cpu_and_memory_share_cases_and_cache_arguments(self):
-        argv = ["--epoch-time-ms", "500", "--syn-count-block-threshold", "3",
+        argv = ["--idle-timeout-ms", "500", "--syn-count-block-threshold", "3",
                 "--ubf-size", "2048", "--clients", "2", "--attackers", "30,10,0,10,20",
                 "--duration", "10", "--client-interval", ".5", "--attack-interval", ".1",
                 "--bin-seconds", ".5", "--before", "2", "--after", "2"]

@@ -20,9 +20,9 @@ ANALYSIS_TARGETS := analysis-threshold-first-drop \
 	analysis-threshold-attack-drop \
 	analysis-confusion-matrix \
 	analysis-boxplot-first-drop \
-	analysis-epoch-boundary \
-	analysis-heatmap-epoch-attack \
-	analysis-heatmap-epoch-legitimate \
+	analysis-idle-timeout-boundary \
+	analysis-heatmap-idle-timeout-attack \
+	analysis-heatmap-idle-timeout-legitimate \
 	analysis-heatmap-ubf-attack \
 	analysis-heatmap-ubf-legitimate \
 	analysis-histogram-ubf \
@@ -63,8 +63,8 @@ help:
 		'  make mode PACKET_HANDLING_MODE=filter' \
 		'    PACKET_HANDLING_MODE defaults to filter: allow, block or filter.' \
 		'' \
-		'  make config EPOCH_TIME_MS=2000 SYN_COUNT_BLOCK_THRESHOLD=3 UBF_SIZE=2048' \
-		'    Set EPOCH_TIME_MS, SYN_COUNT_BLOCK_THRESHOLD and/or UBF_SIZE (1..8192).' \
+		'  make config IDLE_TIMEOUT_MS=2000 SYN_COUNT_BLOCK_THRESHOLD=3 UBF_SIZE=2048' \
+		'    Set IDLE_TIMEOUT_MS, SYN_COUNT_BLOCK_THRESHOLD and/or UBF_SIZE (1..8192).' \
 		'  make config HASH_ALGORITHM=murmur3' \
 		'  make config HASH_ALGORITHM=halfsiphash' \
 		'    make config always selects HASH_ALGORITHM (default: halfsiphash).' \
@@ -107,7 +107,7 @@ mode:
 
 config:
 	$(validate_hash)
-	docker exec clab-topo-firewall /usr/local/bin/syn-flood-detect config --hash-algorithm "$(HASH_ALGORITHM)" $(if $(filter undefined,$(origin EPOCH_TIME_MS)),,--epoch-time-ms "$(EPOCH_TIME_MS)") $(if $(filter undefined,$(origin SYN_COUNT_BLOCK_THRESHOLD)),,--syn-count-block-threshold "$(SYN_COUNT_BLOCK_THRESHOLD)") $(if $(filter undefined,$(origin UBF_SIZE)),,--ubf-size "$(UBF_SIZE)")
+	docker exec clab-topo-firewall /usr/local/bin/syn-flood-detect config --hash-algorithm "$(HASH_ALGORITHM)" $(if $(filter undefined,$(origin IDLE_TIMEOUT_MS)),,--idle-timeout-ms "$(IDLE_TIMEOUT_MS)") $(if $(filter undefined,$(origin SYN_COUNT_BLOCK_THRESHOLD)),,--syn-count-block-threshold "$(SYN_COUNT_BLOCK_THRESHOLD)") $(if $(filter undefined,$(origin UBF_SIZE)),,--ubf-size "$(UBF_SIZE)")
 
 show:
 	docker exec clab-topo-firewall /usr/local/bin/syn-flood-detect show
@@ -129,61 +129,61 @@ save:
 download:
 	python3 scripts/analysis-storage.py download --snapshot $(call shell_quote,$(SNAPSHOT))
 
-analysis-threshold-first-drop: ANALYSIS_ARGS = --epoch-time-ms 500 --syn-count-block-threshold 2,10,20 --ubf-size 2048 \
+analysis-threshold-first-drop: ANALYSIS_ARGS = --idle-timeout-ms 500 --syn-count-block-threshold 2,10,20 --ubf-size 2048 \
 	--clients 15 --attackers 15 --client-interval 0.5 --attack-interval 0.1 --duration 5 \
 	--repetitions 1
 
-analysis-threshold-passed-syns: ANALYSIS_ARGS = --epoch-time-ms 500 --syn-count-block-threshold 2,10,20 --ubf-size 2048 \
+analysis-threshold-passed-syns: ANALYSIS_ARGS = --idle-timeout-ms 500 --syn-count-block-threshold 2,10,20 --ubf-size 2048 \
 	--clients 15 --attackers 15 --client-interval 0.5 --attack-interval 0.1 --duration 5 \
 	--repetitions 1
 
-analysis-threshold-attack-drop: ANALYSIS_ARGS = --epoch-time-ms 500 --syn-count-block-threshold 2,10,20 --ubf-size 2048 \
+analysis-threshold-attack-drop: ANALYSIS_ARGS = --idle-timeout-ms 500 --syn-count-block-threshold 2,10,20 --ubf-size 2048 \
 	--clients 15 --attackers 15 --client-interval 0.5 --attack-interval 0.1 --duration 5 \
 	--repetitions 1
 
-analysis-confusion-matrix: ANALYSIS_ARGS = --epoch-time-ms 500 --syn-count-block-threshold 2,10,20 --ubf-size 2048 \
+analysis-confusion-matrix: ANALYSIS_ARGS = --idle-timeout-ms 500 --syn-count-block-threshold 2,10,20 --ubf-size 2048 \
 	--clients 15 --attackers 15 --client-interval 0.5 --attack-interval 0.1 --duration 5 \
 	--repetitions 1
 
-analysis-boxplot-first-drop: ANALYSIS_ARGS = --epoch-time-ms 500 --syn-count-block-threshold 2,10,20 --ubf-size 2048 \
+analysis-boxplot-first-drop: ANALYSIS_ARGS = --idle-timeout-ms 500 --syn-count-block-threshold 2,10,20 --ubf-size 2048 \
 	--clients 15 --attackers 15 --client-interval 0.5 --attack-interval 0.1 --duration 5 \
 	--repetitions 1
 
-analysis-epoch-boundary: ANALYSIS_ARGS = --epoch-time-ms 1,45,55,75,95,105,150,195,205,250 --syn-count-block-threshold 3 --ubf-size 2048 \
+analysis-idle-timeout-boundary: ANALYSIS_ARGS = --idle-timeout-ms 1,45,55,75,95,105,150,195,205,250 --syn-count-block-threshold 3 --ubf-size 2048 \
 	--clients 15 --attackers 15 --client-interval 0.5 --attack-interval 0.05,0.1,0.2 --duration 5 \
 	--repetitions 1
 
-analysis-heatmap-epoch-attack: ANALYSIS_ARGS = --epoch-time-ms 50,100,150 --syn-count-block-threshold 2,20 --ubf-size 128 \
+analysis-heatmap-idle-timeout-attack: ANALYSIS_ARGS = --idle-timeout-ms 50,100,150 --syn-count-block-threshold 2,20 --ubf-size 128 \
 	--clients 15 --attackers 15 --client-interval 0.5 --attack-interval 0.1 --duration 5 \
 	--repetitions 1
 
-analysis-heatmap-epoch-legitimate: ANALYSIS_ARGS = --epoch-time-ms 50,100,150 --syn-count-block-threshold 2,20 --ubf-size 128 \
+analysis-heatmap-idle-timeout-legitimate: ANALYSIS_ARGS = --idle-timeout-ms 50,100,150 --syn-count-block-threshold 2,20 --ubf-size 128 \
 	--clients 15 --attackers 15 --client-interval 0.5 --attack-interval 0.1 --duration 5 \
 	--repetitions 1
 
-analysis-heatmap-ubf-attack: ANALYSIS_ARGS = --epoch-time-ms 500 --syn-count-block-threshold 2 --ubf-size 8,64,128,256,512,1024 \
+analysis-heatmap-ubf-attack: ANALYSIS_ARGS = --idle-timeout-ms 500 --syn-count-block-threshold 2 --ubf-size 8,64,128,256,512,1024 \
 	--sources 10,50,100,200 --attacker-percent 20 --client-interval 0.5 --attack-interval 0.1 --duration 5 \
 	--repetitions 1
 
-analysis-heatmap-ubf-legitimate: ANALYSIS_ARGS = --epoch-time-ms 500 --syn-count-block-threshold 2 --ubf-size 8,64,128,256,512,1024 \
+analysis-heatmap-ubf-legitimate: ANALYSIS_ARGS = --idle-timeout-ms 500 --syn-count-block-threshold 2 --ubf-size 8,64,128,256,512,1024 \
 	--sources 10,50,100,200 --attacker-percent 20 --client-interval 0.1 --attack-interval 0.1 --duration 5 \
 	--repetitions 1
 
-analysis-histogram-ubf: ANALYSIS_ARGS = --epoch-time-ms 500 --syn-count-block-threshold 3 --ubf-size 8,64,256,2048 \
+analysis-histogram-ubf: ANALYSIS_ARGS = --idle-timeout-ms 500 --syn-count-block-threshold 3 --ubf-size 8,64,256,2048 \
 	--clients 15 --attackers 15 --client-interval 0.5 --attack-interval 0.1 --duration 5 \
 	--repetitions 1
 
-analysis-time-series: ANALYSIS_ARGS = --epoch-time-ms 500 --syn-count-block-threshold 3 --ubf-size 2048 \
+analysis-time-series: ANALYSIS_ARGS = --idle-timeout-ms 500 --syn-count-block-threshold 3 --ubf-size 2048 \
 	--clients 2 --attackers 3 --client-interval 0.5 --attack-interval 0.1 --duration 10 \
 	--before 2 --after 2 --bin-seconds 0.5
 
-analysis-memory-time-series analysis-cpu-time-series analysis-memory-time-series-allow analysis-cpu-time-series-allow analysis-syn-queue-time-series analysis-conntrack-time-series: ANALYSIS_ARGS = --epoch-time-ms 500 --syn-count-block-threshold 3 --ubf-size 2048 \
+analysis-memory-time-series analysis-cpu-time-series analysis-memory-time-series-allow analysis-cpu-time-series-allow analysis-syn-queue-time-series analysis-conntrack-time-series: ANALYSIS_ARGS = --idle-timeout-ms 500 --syn-count-block-threshold 3 --ubf-size 2048 \
 	--clients 2 --attackers 1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,59,60,61,62,63,64,65,66,67,68,69,70,71,72,73,74,75,76,77,78,79,80,81,82,83,84,85,86,87,88,89,90,91,92,93,94,95,96,97,98,99,100 --client-interval 0.5 --attack-interval 0.01 --duration 0.325 \
 	--before 0 --after 6.5 --bin-seconds 0.25
 
 analysis-conntrack-time-series: ANALYSIS_ARGS += --conntrack-max 65536
 
-analysis-syn-backlog-expiration: ANALYSIS_ARGS = --epoch-time-ms 500 --syn-count-block-threshold 3 --ubf-size 2048 \
+analysis-syn-backlog-expiration: ANALYSIS_ARGS = --idle-timeout-ms 500 --syn-count-block-threshold 3 --ubf-size 2048 \
 	--clients 2 --attackers 1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,59,60,61,62,63,64,65,66,67,68,69,70,71,72,73,74,75,76,77,78,79,80,81,82,83,84,85,86,87,88,89,90,91,92,93,94,95,96,97,98,99,100 --client-interval 0.5 --attack-interval 0.01 --duration 0.325 \
 	--before 0 --after 90 --bin-seconds 0.25 --synack-retries 1,3,5
 
