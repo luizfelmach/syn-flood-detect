@@ -3,6 +3,7 @@
 
 import argparse
 import csv
+from contextlib import ExitStack, nullcontext
 from collections import Counter, defaultdict
 import hashlib
 import itertools
@@ -292,7 +293,8 @@ def execute(args, cases):
     execute_cached("time_series", args, cases, collect, render, temporal_rates)
 
 
-def collect(args, cases, directory):
+def collect(args, cases, directory, *, kind="time_series", runner=run_one,
+            prepare=None, renderer=render, isolated_runs=False):
     started = time.monotonic()
     report("Preflight: checking output, dependencies, Docker, and image availability")
     preflight(args.out, args.cmap)
@@ -312,7 +314,8 @@ def collect(args, cases, directory):
         f"PNG destination: {(args.out.resolve() if args.out else directory / 'figure.png')}"
     )
     manifest = dict(
-        kind="time_series",
+        kind=kind,
+        isolated_runs=isolated_runs,
         status="running",
         command=[sys.executable, *sys.argv],
         options={
@@ -344,6 +347,7 @@ def collect(args, cases, directory):
     manifest.update(matplotlib=matplotlib.__version__, numpy=numpy.__version__)
     save(directory / "experiment.json", manifest)
     rows, origins, temporal, metadata = ([], [], [], {})
+    runs = []
 
     def interrupted(signum, frame):
         raise KeyboardInterrupt(f"Signal {signum}")
@@ -355,7 +359,9 @@ def collect(args, cases, directory):
         report(f"Using existing Docker image: {args.image}; pinned ID: {image}")
         manifest["image_id"] = image
         save(directory / "experiment.json", manifest)
-        with fresh_lab(directory / "lab", image, args.ready_timeout) as (prefix, packet_dir):
+        with ExitStack() as labs:
+            if not isolated_runs:
+                shared = labs.enter_context(fresh_lab(directory / "lab", image, args.ready_timeout))
             for i, case in enumerate(cases, 1):
                 manifest["stage"] = f"Run {i}/{len(cases)}: {case['id']}"
                 save(directory / "experiment.json", manifest)
@@ -363,41 +369,52 @@ def collect(args, cases, directory):
                     f"Seeds: client={case['client_seed']}, attack={case['attack_seed']}; repetition={case['repetition']}"
                 )
                 print(
-                    f"[{i}/{len(cases)}] EPOCH_TIME_MS={case['epoch_ms']} SYN_COUNT_BLOCK_THRESHOLD={case['threshold']} UBF_SIZE={case['ubf_size']}: shared lab",
+                    f"[{i}/{len(cases)}] EPOCH_TIME_MS={case['epoch_ms']} SYN_COUNT_BLOCK_THRESHOLD={case['threshold']} UBF_SIZE={case['ubf_size']}: {'isolated lab' if isolated_runs else 'shared lab'}",
                     flush=True,
                 )
                 run_dir = directory / case["id"]
                 observation = dict(before=args.before, after=args.after)
-                run_one(
-                    case,
-                    directory,
-                    args.duration,
-                    args.ready_timeout,
-                    prefix,
-                    packet_dir,
-                    **observation,
-                )
-                report(f"Analyzing collection: {run_dir}")
-                row, origin, metadata = analyze_run(run_dir)
-                temporal = temporal_rates(run_dir, metadata, args.bin_seconds)
-                rows.append(row)
-                origins.extend(origin)
-                write_csv(directory / "runs.csv", rows)
-                write_csv(directory / "summary.csv", aggregate(rows))
-                write_csv(directory / "origins.csv", origins)
-                report(
-                    f"Collection quality: {row['quality']}; events lost={row['events_lost']}; aborted={row['aborted']}"
-                )
-                if row["quality"] != "ok":
-                    print(
-                        f"Invalid collection: {case['id']}: {row['quality']}; point will be N/A.",
-                        flush=True,
+                lab = (fresh_lab(run_dir / "lab", image, args.ready_timeout)
+                       if isolated_runs else nullcontext(shared))
+                with lab as (prefix, packet_dir):
+                    runner(
+                        case,
+                        directory,
+                        args.duration,
+                        args.ready_timeout,
+                        prefix,
+                        packet_dir,
+                        **observation,
                     )
-        write_csv(directory / "timeseries.csv", temporal)
+                    report(f"Analyzing collection: {run_dir}")
+                    row, origin, metadata = analyze_run(run_dir)
+                    runs.append((run_dir, metadata))
+                    if prepare is None:
+                        temporal = temporal_rates(run_dir, metadata, args.bin_seconds)
+                    rows.append(row)
+                    origins.extend(origin)
+                    write_csv(directory / "runs.csv", rows)
+                    write_csv(directory / "summary.csv", aggregate(rows))
+                    write_csv(directory / "origins.csv", origins)
+                    report(
+                        f"Collection quality: {row['quality']}; events lost={row['events_lost']}; aborted={row['aborted']}"
+                    )
+                    if row["quality"] != "ok":
+                        print(
+                            f"Invalid collection: {case['id']}: {row['quality']}; point will be N/A.",
+                            flush=True,
+                        )
+        if prepare is None:
+            write_csv(directory / "timeseries.csv", temporal)
+        else:
+            temporal = prepare(args, rows, runs, directory)
         output = args.out.resolve() if args.out else directory / "figure.png"
         manifest["stage"] = "Rendering PNG"
         report(f"Rendering PNG: {output}")
-        render(args, rows, temporal, metadata, output)
+        if prepare is None:
+            renderer(args, rows, temporal, metadata, output)
+        else:
+            renderer(args, rows, temporal, output)
         valid = sum((row["quality"] == "ok" for row in rows))
         manifest.update(
             status="complete",
@@ -419,7 +436,7 @@ def collect(args, cases, directory):
         report(
             f"Failed during {manifest.get('stage', 'setup')}: {manifest['error']}; evidence: {directory}"
         )
-        for state_path in sorted(directory.glob("*/lab.json")):
+        for state_path in sorted(directory.rglob("lab.json")):
             state = json.loads(state_path.read_text())
             report(
                 f"Cleanup status: {state['name']}: {state['status']}; details: {state_path}"

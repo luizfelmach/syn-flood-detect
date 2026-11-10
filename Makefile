@@ -27,6 +27,13 @@ ANALYSIS_TARGETS := analysis-threshold-first-drop \
 	analysis-heatmap-ubf-legitimate \
 	analysis-histogram-ubf \
 	analysis-time-series \
+	analysis-memory-time-series \
+	analysis-cpu-time-series \
+	analysis-memory-time-series-allow \
+	analysis-cpu-time-series-allow \
+	analysis-syn-queue-time-series \
+	analysis-syn-backlog-expiration \
+	analysis-conntrack-time-series \
 	analysis-hash-comparison \
 	analysis-hash-comparison-primes \
 	analysis-halfsiphash-ubf-sweep \
@@ -169,6 +176,16 @@ analysis-histogram-ubf: ANALYSIS_ARGS = --epoch-time-ms 500 --syn-count-block-th
 analysis-time-series: ANALYSIS_ARGS = --epoch-time-ms 500 --syn-count-block-threshold 3 --ubf-size 2048 \
 	--clients 2 --attackers 3 --client-interval 0.5 --attack-interval 0.1 --duration 10 \
 	--before 2 --after 2 --bin-seconds 0.5
+
+analysis-memory-time-series analysis-cpu-time-series analysis-memory-time-series-allow analysis-cpu-time-series-allow analysis-syn-queue-time-series analysis-conntrack-time-series: ANALYSIS_ARGS = --epoch-time-ms 500 --syn-count-block-threshold 3 --ubf-size 2048 \
+	--clients 2 --attackers 1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,59,60,61,62,63,64,65,66,67,68,69,70,71,72,73,74,75,76,77,78,79,80,81,82,83,84,85,86,87,88,89,90,91,92,93,94,95,96,97,98,99,100 --client-interval 0.5 --attack-interval 0.01 --duration 0.325 \
+	--before 0 --after 6.5 --bin-seconds 0.25
+
+analysis-conntrack-time-series: ANALYSIS_ARGS += --conntrack-max 65536
+
+analysis-syn-backlog-expiration: ANALYSIS_ARGS = --epoch-time-ms 500 --syn-count-block-threshold 3 --ubf-size 2048 \
+	--clients 2 --attackers 1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,59,60,61,62,63,64,65,66,67,68,69,70,71,72,73,74,75,76,77,78,79,80,81,82,83,84,85,86,87,88,89,90,91,92,93,94,95,96,97,98,99,100 --client-interval 0.5 --attack-interval 0.01 --duration 0.325 \
+	--before 0 --after 90 --bin-seconds 0.25 --synack-retries 1,3,5
 
 analysis-hash-comparison: ANALYSIS_ARGS = --ubf-size 8192 \
 	--sources 100,200,250,300,400,500,600,700,800,900,1000,1100,1200,1300,1400,1500,1600,1700,1800,1900,2000 --attacker-percent 50 \

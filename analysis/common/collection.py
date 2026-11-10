@@ -55,7 +55,7 @@ def sleep_checked(seconds, workers, phase=None):
         report(f"{phase}: finished ({time.monotonic() - started:.1f} s elapsed)")
 
 
-def start(kind, count, interval, directory, seed, prefix):
+def start(kind, count, interval, directory, seed, prefix, *, steps=None, step_seconds=None):
     path = directory / f"{kind}.log"
     log = path.open("w")
     proc = subprocess.Popen(
@@ -67,7 +67,7 @@ def start(kind, count, interval, directory, seed, prefix):
             str(count),
             format(Decimal(str(interval)), "f"),
             prefix,
-        ],
+        ] + ([",".join(map(str, steps)), str(step_seconds)] if steps else []),
         cwd=ROOT,
         stdout=log,
         stderr=subprocess.STDOUT,
@@ -251,10 +251,12 @@ def run_one(
                 directory,
                 case["attack_seed"],
                 prefix,
+                steps=case.get("attack_steps"),
+                step_seconds=case.get("step_duration_s"),
             )
             workers.append(worker)
             metadata["sources"]["attack"] = ready(
-                worker, case["attackers"], workers, timeout
+                worker, case.get("attack_steps", [case["attackers"]])[0], workers, timeout
             )
             report(f"Attacker sources ready: {len(metadata['sources']['attack'])}")
         stage("Measurement phase")
@@ -262,6 +264,21 @@ def run_one(
         save(path, metadata)
         sleep_checked(duration, workers, "Measurement")
         metadata["phases"]["measure_end_ns"] = time.monotonic_ns()
+        if case.get("attack_steps"):
+            metadata["sources"]["attack"] = sorted(set(re.findall(
+                r"source=([0-9.]+)", worker[2].read_text(),
+            )))
+            if len(metadata["sources"]["attack"]) != case["attackers"]:
+                raise RuntimeError("Attacker ramp did not start all sources within the measurement duration")
+            metadata["attack_ramp"] = [
+                dict(timestamp_monotonic_ns=int(timestamp), attackers=int(count))
+                for timestamp, count in re.findall(
+                    r"ramp timestamp_monotonic_ns=(\d+) attackers=(\d+)",
+                    worker[2].read_text(),
+                )
+            ]
+            if [step["attackers"] for step in metadata["attack_ramp"]] != case["attack_steps"]:
+                raise RuntimeError("Attacker ramp did not complete the requested steps")
         if case["attackers"]:
             stage("Stopping attacker generators")
             stop(workers[-1])

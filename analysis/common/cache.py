@@ -32,14 +32,18 @@ def digest(path):
         return hashlib.file_digest(stream, "sha256").hexdigest()
 
 
-def inspect_collection(directory, cases):
+def inspect_collection(directory, cases, *, isolated_runs=False):
     """Require complete measurements, successful lab cleanup and current quality checks."""
     manifest = json.loads((directory / "experiment.json").read_text())
     if manifest["status"] != "complete" or manifest["cases"] != cases:
         raise ValueError("incomplete or incompatible experiment")
-    lab = json.loads((directory / "lab" / "lab.json").read_text())
-    if lab["status"] != "destroyed":
-        raise ValueError("lab cleanup incomplete")
+    if manifest.get("topology_sha256") != digest(ROOT / "topo.clab.yml"):
+        raise ValueError("topology changed since collection")
+    lab_paths = [directory / case["id"] / "lab/lab.json" for case in cases] if isolated_runs else [directory / "lab/lab.json"]
+    for path in lab_paths:
+        lab = json.loads(path.read_text())
+        if lab["status"] != "destroyed":
+            raise ValueError("lab cleanup incomplete")
     rows, origins, runs = [], [], []
     for case in cases:
         run_dir = directory / case["id"]
@@ -52,11 +56,15 @@ def inspect_collection(directory, cases):
     return rows, origins, runs
 
 
-def collection_hashes(directory, cases):
-    paths = [Path("experiment.json"), Path("lab/lab.json")]
+def collection_hashes(directory, cases, extra_files=(), *, isolated_runs=False):
+    paths = [Path("experiment.json")]
+    if isolated_runs:
+        paths.extend(Path(case["id"]) / "lab/lab.json" for case in cases)
+    else:
+        paths.append(Path("lab/lab.json"))
     for case in cases:
         paths.extend(Path(case["id"]) / name for name in (
-            "run.json", "packets.csv", "stats.csv"
+            "run.json", "packets.csv", "stats.csv", *extra_files
         ))
     return {str(path): digest(directory / path) for path in paths}
 
@@ -84,7 +92,7 @@ def render_cached(args, directory, data, render, temporal_rates, *, with_origins
     return output
 
 
-def execute_cached(kind, args, cases, collect, render, temporal_rates=None, *, with_origins=False, prepare=None):
+def execute_cached(kind, args, cases, collect, render, temporal_rates=None, *, with_origins=False, prepare=None, extra_files=(), isolated_runs=False):
     if args.dry_run:
         return
     root = CACHE_ROOT / kind
@@ -110,9 +118,9 @@ def execute_cached(kind, args, cases, collect, render, temporal_rates=None, *, w
                     directory = root / "attempts" / record["attempt"]
                     if directory.parent != root / "attempts":
                         raise ValueError("invalid cache location")
-                    if collection_hashes(directory, cases) != record["sha256"]:
+                    if collection_hashes(directory, cases, extra_files, isolated_runs=isolated_runs) != record["sha256"]:
                         raise ValueError("collection files changed")
-                    data = inspect_collection(directory, cases)
+                    data = inspect_collection(directory, cases, isolated_runs=isolated_runs)
             except (OSError, ValueError, KeyError, TypeError, csv.Error) as error:
                 reason = f"cache invalid: {error}"
         if data is not None:
@@ -128,8 +136,8 @@ def execute_cached(kind, args, cases, collect, render, temporal_rates=None, *, w
             collect(args, cases, directory)
             output = args.out.resolve() if args.out else directory / "figure.png"
             try:
-                inspect_collection(directory, cases)
-                hashes = collection_hashes(directory, cases)
+                inspect_collection(directory, cases, isolated_runs=isolated_runs)
+                hashes = collection_hashes(directory, cases, extra_files, isolated_runs=isolated_runs)
             except (OSError, ValueError, KeyError, TypeError, csv.Error) as error:
                 report(f"Collection not cached: {error}; evidence: {directory}")
             else:
