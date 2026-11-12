@@ -3,6 +3,8 @@
 CLAB := containerlab
 TOPOLOGY := topo.clab.yml
 CLIENTS ?= 10
+# Use the host network to avoid Docker bridge MTU issues during downloads.
+BUILD_NETWORK ?= host
 INTERVAL ?= 1
 PACKET_HANDLING_MODE ?= filter
 HASH_ALGORITHM ?= halfsiphash
@@ -88,7 +90,7 @@ help:
 
 build:
 	@test "$$(uname -sm)" = 'Linux x86_64' || { echo 'The lab requires Linux x86_64.' >&2; exit 1; }
-	docker build --platform linux/amd64 -t node:local .
+	docker build --network=$(BUILD_NETWORK) --platform linux/amd64 -t node:local .
 
 deploy: build
 	mkdir -p results/packets

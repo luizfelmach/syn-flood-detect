@@ -54,6 +54,12 @@ impl Frame {
 
     #[inline(always)]
     fn contains(&self, end: usize) -> bool {
+        // Keep an explicit scalar bound visible to the BPF verifier before
+        // adding a variable offset to a packet pointer (IPv4 length + Ethernet).
+        let end = core::hint::black_box(end);
+        if end > 14 + u16::MAX as usize {
+            return false;
+        }
         self.start + end <= self.end
     }
 }
@@ -86,7 +92,8 @@ fn parse_ethernet(frame: &Frame, packet: &mut Packet) -> Option<()> {
     }
 }
 
-#[inline(always)]
+// Isolate IPv4 parsing to keep register pressure bounded in the XDP entry point.
+#[inline(never)]
 fn parse_ipv4(frame: &Frame, packet: &mut Packet) -> Option<()> {
     let ip = frame.bytes::<20>(14)?;
     let ihl = (ip[0] & 15) as usize * 4;
