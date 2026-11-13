@@ -10,6 +10,7 @@ from contextlib import contextmanager
 import csv
 import math
 from pathlib import Path
+import shlex
 import subprocess
 import threading
 import time
@@ -108,23 +109,90 @@ END {
 '''
 
 
+# conntrack -S uses decimal key=value counters, one row per CPU. Do not parse
+# these as the hexadecimal values from /proc/net/stat/nf_conntrack.
+CONNTRACK_NETLINK_AWK = '''
+FILENAME ~ /\\/nf_conntrack_count$/ {
+    if (FNR != 1 || NF != 1 || $1 !~ /^[0-9]+$/) { bad=1; exit 2 }
+    count=$1; next
+}
+FILENAME ~ /\\/nf_conntrack_max$/ {
+    if (FNR != 1 || NF != 1 || $1 !~ /^[0-9]+$/) { bad=1; exit 2 }
+    maximum=$1; next
+}
+{
+    delete seen
+    for (i=1; i<=NF; i++) {
+        if (split($i, pair, "=") != 2) { bad=1; exit 2 }
+        name=pair[1]; value=pair[2]
+        if (name != "cpu" && name != "drop" && name != "early_drop" && name != "insert_failed") continue
+        if (seen[name]++ || value !~ /^[0-9]+$/) { bad=1; exit 2 }
+        if (name == "cpu") {
+            if (cpus[value+0]++) { bad=1; exit 2 }
+        } else {
+            total[name]+=value
+        }
+    }
+    if (!seen["cpu"] || !seen["drop"] || !seen["early_drop"] || !seen["insert_failed"]) { bad=1; exit 2 }
+    rows++
+}
+END {
+    if (bad || !rows || count !~ /^[0-9]+$/ || maximum !~ /^[0-9]+$/ || maximum<1) exit 2
+    printf "%.0f %.0f %.0f %.0f %.0f\\n", count, maximum, total["drop"], total["early_drop"], total["insert_failed"]
+}
+'''
+
+
+def conntrack_sampler_script(interval):
+    """Select one statistics source for the lifetime of the sampler."""
+    if not math.isfinite(interval) or interval <= 0:
+        raise ValueError("Conntrack sampling interval must be finite and positive")
+    return (
+        'set -eu\nprintf "PID %s\\n" "$$"\ntrap "exit 0" TERM INT\n'
+        'if [ -r /proc/net/stat/nf_conntrack ]; then\n'
+        '    source=procfs\n'
+        'else\n'
+        '    source=netlink\n'
+        '    command -v conntrack >/dev/null 2>&1 || {\n'
+        '        echo "Missing /proc/net/stat/nf_conntrack and conntrack executable; rebuild the node image with make build." >&2\n'
+        '        exit 1\n'
+        '    }\n'
+        'fi\n'
+        'printf "Conntrack statistics source: %s\\n" "$source" >&2\n'
+        'while :; do\n'
+        'if [ "$source" = procfs ]; then\n'
+        # A shell read may issue one-byte reads, which proc sysctl files need
+        # not support. awk reads each complete value in one buffered read.
+        f'awk {shlex.quote(CONNTRACK_STATS_AWK)} /proc/sys/net/netfilter/nf_conntrack_count '
+        '/proc/sys/net/netfilter/nf_conntrack_max /proc/net/stat/nf_conntrack\n'
+        'else\n'
+        # Capture the command before the pipeline: POSIX sh has no pipefail.
+        # A failed Netlink query must never become an apparently valid zero.
+        'stats=$(conntrack -S) || {\n'
+        '    echo "conntrack -S failed; check Netlink support and NET_ADMIN in the firewall namespace." >&2\n'
+        '    exit 1\n'
+        '}\n'
+        f'printf "%s\\n" "$stats" | awk {shlex.quote(CONNTRACK_NETLINK_AWK)} '
+        '/proc/sys/net/netfilter/nf_conntrack_count /proc/sys/net/netfilter/nf_conntrack_max -\n'
+        'fi\n'
+        f'sleep {interval:.9f}\ndone'
+    )
+
+
 @contextmanager
 def sample_conntrack(prefix, directory, interval):
     """Read only this firewall namespace through one persistent Docker exec."""
-    if not math.isfinite(interval) or interval <= 0:
-        raise ValueError("Conntrack sampling interval must be finite and positive")
-    script = (
-        'set -eu\nprintf "PID %s\\n" "$$"\ntrap "exit 0" TERM INT\n'
-        'while :; do\n'
-        # A shell read may issue one-byte reads, which proc sysctl files need
-        # not support. awk reads each complete value in one buffered read.
-        f"awk '{CONNTRACK_STATS_AWK}' /proc/sys/net/netfilter/nf_conntrack_count "
-        '/proc/sys/net/netfilter/nf_conntrack_max /proc/net/stat/nf_conntrack\n'
-        f'sleep {interval:.9f}\ndone'
-    )
+    script = conntrack_sampler_script(interval)
     ready, stopping = threading.Event(), threading.Event()
     errors, remote_pid = [], []
     firewall = prefix + "firewall"
+
+    def sampling_error():
+        path = directory / "conntrack.log"
+        detail = path.read_text().strip()[-2000:]
+        return RuntimeError(f"Conntrack sampling failed: {errors[0]}; see {path}"
+                            + (f"\n{detail}" if detail else ""))
+
     with (directory / "conntrack.csv").open("w", newline="") as stream, \
          (directory / "conntrack.log").open("w") as log:
         writer = csv.DictWriter(stream, fieldnames=("timestamp_monotonic_ns", *FIELDS))
@@ -159,7 +227,7 @@ def sample_conntrack(prefix, directory, interval):
             if not ready.wait(10):
                 raise RuntimeError(f"Conntrack sampler did not become ready; see {directory / 'conntrack.log'}")
             if errors:
-                raise RuntimeError(f"Conntrack sampling failed: {errors[0]}") from errors[0]
+                raise sampling_error() from errors[0]
             yield
         finally:
             stopping.set()
@@ -184,7 +252,7 @@ def sample_conntrack(prefix, directory, interval):
                 else:
                     proc.stdout.close()
             if errors:
-                raise RuntimeError(f"Conntrack sampling failed: {errors[0]}") from errors[0]
+                raise sampling_error() from errors[0]
 
 
 def conntrack_series(directory, metadata, bin_seconds):

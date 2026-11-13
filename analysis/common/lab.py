@@ -14,6 +14,12 @@ from .progress import report
 
 
 def clab(action, topology, log):
+    # Containerlab puts topology backups under $TMPDIR/.clab/bak. An inherited
+    # nix-shell TMPDIR leaves root-owned directories that its exit hook cannot
+    # remove. Keep these artifacts with the run, and create their directories
+    # as the caller before Containerlab gains privileges.
+    temporary = topology.parent.resolve() / "containerlab-tmp"
+    (temporary / ".clab" / "bak").mkdir(parents=True, exist_ok=True)
     args = ["containerlab", action, "-t", str(topology)]
     args += ["--skip-labdir-acl"] if action == "deploy" else ["--cleanup"]
     report(f"Containerlab {action}; log: {log}")
@@ -21,7 +27,7 @@ def clab(action, topology, log):
         subprocess.run(
             args,
             cwd=ROOT,
-            env={**os.environ, "CLAB_LABDIR_BASE": "/tmp"},
+            env={**os.environ, "CLAB_LABDIR_BASE": "/tmp", "TMPDIR": str(temporary)},
             stdout=stream,
             stderr=subprocess.STDOUT,
             check=True,

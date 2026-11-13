@@ -3,6 +3,7 @@
 import csv
 import importlib.util
 import json
+import os
 from pathlib import Path
 import shutil
 import subprocess
@@ -14,7 +15,10 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from common.conntrack import CONNTRACK_STATS_AWK, FIELDS, conntrack_series, temporary_conntrack_limit
+from common.conntrack import (
+    CONNTRACK_STATS_AWK, CONNTRACK_NETLINK_AWK, FIELDS,
+    conntrack_sampler_script, conntrack_series, sample_conntrack, temporary_conntrack_limit,
+)
 from conntrack_time_series import cases_for, parse, render
 from syn_queue_time_series import cases_for as server_cases, parse as server_parse
 
@@ -65,6 +69,119 @@ class ConntrackTests(unittest.TestCase):
             result = subprocess.run(["awk", CONNTRACK_STATS_AWK], input=data, text=True, capture_output=True)
             self.assertNotEqual(result.returncode, 0)
 
+    @unittest.skipUnless(shutil.which("awk"), "requires awk")
+    def test_netlink_decimal_counters_sum_cpus_in_any_field_order(self):
+        result = subprocess.run(
+            ["awk", "-v", "count=4096", "-v", "maximum=8192", CONNTRACK_NETLINK_AWK],
+            input="cpu=0 found=10 drop=10 early_drop=2 insert_failed=1\n"
+                  "insert_failed=2 early_drop=3 drop=255 found=900 cpu=7\n",
+            text=True, capture_output=True, check=True,
+        )
+        self.assertEqual(result.stdout.strip(), "4096 8192 265 5 3")
+
+    @unittest.skipUnless(shutil.which("awk"), "requires awk")
+    def test_netlink_incomplete_malformed_or_duplicate_statistics_are_rejected(self):
+        valid = "cpu=0 drop=10 early_drop=2 insert_failed=1\n"
+        for data in ("", "\n", "cpu=0 drop=10\n", valid.replace("drop=10", "drop=-1"),
+                     valid.replace("drop=10", "drop=0a"), valid.replace("cpu=0", "cpu=x"),
+                     valid + valid, valid.replace("drop=10", "drop=10 drop=20"),
+                     valid + "conntrack: error\n"):
+            with self.subTest(data=data):
+                result = subprocess.run(
+                    ["awk", "-v", "count=4096", "-v", "maximum=8192", CONNTRACK_NETLINK_AWK],
+                    input=data, text=True, capture_output=True,
+                )
+                self.assertNotEqual(result.returncode, 0)
+                self.assertEqual(result.stdout, "")
+
+    def sampler_fixture(self, *, procfs=None, netlink=None):
+        """Exercise the actual POSIX shell sampler against simulated kernel/tool I/O."""
+        bindir = self.directory / "bin"
+        bindir.mkdir()
+        (bindir / "awk").symlink_to(shutil.which("awk"))
+        sleep = bindir / "sleep"
+        sleep.write_text('#!/bin/sh\nkill -TERM "$PPID"\n')
+        sleep.chmod(0o755)
+        if netlink is not None:
+            tool = bindir / "conntrack"
+            tool.write_text('#!/bin/sh\n[ "$1" = -S ] || exit 90\n' + netlink)
+            tool.chmod(0o755)
+        script = conntrack_sampler_script(.25)
+        for original, name, content in (
+            ("/proc/sys/net/netfilter/nf_conntrack_count", "nf_conntrack_count", "12345\n"),
+            ("/proc/sys/net/netfilter/nf_conntrack_max", "nf_conntrack_max", "65536\n"),
+            ("/proc/net/stat/nf_conntrack", "stats", procfs),
+        ):
+            target = self.directory / name
+            if content is not None:
+                target.write_text(content)
+            script = script.replace(original, str(target))
+        return script, {**os.environ, "PATH": str(bindir)}
+
+    @unittest.skipUnless(shutil.which("awk") and shutil.which("sh"), "requires awk and sh")
+    def test_shell_prefers_procfs_and_does_not_invoke_netlink(self):
+        script, env = self.sampler_fixture(
+            procfs="entries drop early_drop insert_failed\n00003039 0a 02 01\n00003039 ff 03 02\n",
+            netlink="echo 'must not run' >&2\nexit 91\n",
+        )
+        result = subprocess.run([shutil.which("sh"), "-c", script], env=env,
+                                text=True, capture_output=True, timeout=5, check=True)
+        self.assertEqual(result.stdout.splitlines()[1:], ["12345 65536 265 5 3"])
+        self.assertIn("source: procfs", result.stderr)
+        self.assertNotIn("must not run", result.stderr)
+
+    @unittest.skipUnless(shutil.which("awk") and shutil.which("sh"), "requires awk and sh")
+    def test_shell_netlink_fallback_preserves_zero_counters(self):
+        script, env = self.sampler_fixture(
+            netlink="echo 'cpu=0 found=3 drop=0 early_drop=0 insert_failed=0'\n"
+                    "echo 'cpu=1 found=7 drop=0 early_drop=0 insert_failed=0'\n",
+        )
+        result = subprocess.run([shutil.which("sh"), "-c", script], env=env,
+                                text=True, capture_output=True, timeout=5, check=True)
+        self.assertEqual(result.stdout.splitlines()[1:], ["12345 65536 0 0 0"])
+        self.assertIn("source: netlink", result.stderr)
+
+    @unittest.skipUnless(shutil.which("awk") and shutil.which("sh"), "requires awk and sh")
+    def test_shell_missing_tool_has_rebuild_instruction_and_no_sample(self):
+        script, env = self.sampler_fixture()
+        result = subprocess.run([shutil.which("sh"), "-c", script], env=env,
+                                text=True, capture_output=True, timeout=5)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(len(result.stdout.splitlines()), 1)  # PID handshake only
+        self.assertIn("make build", result.stderr)
+
+    @unittest.skipUnless(shutil.which("awk") and shutil.which("sh"), "requires awk and sh")
+    def test_failed_netlink_query_never_publishes_partial_output(self):
+        script, env = self.sampler_fixture(
+            netlink="echo 'cpu=0 drop=1 early_drop=2 insert_failed=3'\n"
+                    "echo 'Operation not permitted' >&2\nexit 1\n",
+        )
+        result = subprocess.run([shutil.which("sh"), "-c", script], env=env,
+                                text=True, capture_output=True, timeout=5)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(len(result.stdout.splitlines()), 1)
+        self.assertIn("conntrack -S failed", result.stderr)
+
+    @unittest.skipUnless(shutil.which("awk") and shutil.which("sh"), "requires awk and sh")
+    def test_sampler_reports_underlying_error_and_log_path(self):
+        script, env = self.sampler_fixture(netlink="echo 'Operation not permitted' >&2\nexit 1\n")
+        popen = subprocess.Popen
+
+        def launch(command, **kwargs):
+            # Substitute only Docker transport; run the real failing shell collector.
+            return popen([shutil.which("sh"), "-c", script], env=env, **kwargs)
+
+        with patch("common.conntrack.subprocess.Popen", side_effect=launch):
+            with self.assertRaisesRegex(RuntimeError, "Operation not permitted") as error:
+                with sample_conntrack("test-", self.directory, .25):
+                    self.fail("The collector must not become ready without a sample")
+        self.assertIn(str(self.directory / "conntrack.log"), str(error.exception))
+
+    def test_sampler_rejects_invalid_interval(self):
+        for interval in (0, -1, float('inf'), float('nan')):
+            with self.assertRaises(ValueError):
+                conntrack_sampler_script(interval)
+
     def test_time_weighted_rates_preserve_totals_and_occupancy_snapshots(self):
         rows = self.series()
         self.assertEqual([row["second"] for row in rows], [0, .5, 1, 1.25])
@@ -110,7 +227,7 @@ class ConntrackTests(unittest.TestCase):
                 "--attack-interval", ".01", "--bin-seconds", ".25", "--before", "0", "--after", "6.5"]
         args = parse(argv)
         self.assertEqual(cases_for(args), server_cases(server_parse(argv)))
-        self.assertEqual(args._cache_arguments["conntrack_version"], 2)
+        self.assertEqual(args._cache_arguments["conntrack_version"], 3)
         self.assertNotIn("syn_queue_version", args._cache_arguments)
         limited = parse([*argv, "--conntrack-max", "65536"])
         self.assertEqual(limited.conntrack_max, 65536)

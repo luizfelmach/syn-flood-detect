@@ -26,13 +26,14 @@ def parse(argv=None):
     args = resource_parse("conntrack", argv, description=(
         "Compare firewall conntrack table occupancy with filtering and in allow mode during identical attacker ramps. "
         "Each mode uses a fresh isolated lab, identical traffic and seeds. "
-        "Read namespace-wide nf_conntrack_count, nf_conntrack_max and per-CPU /proc/net/stat/nf_conntrack. "
+        "Read namespace-wide nf_conntrack_count and nf_conntrack_max; read per-CPU statistics from "
+        "/proc/net/stat/nf_conntrack when available, otherwise use conntrack -S over Netlink. "
         "Drop includes conntrack allocation/confirmation/protocol failures, not only table-full events or XDP blocks. "
         "early_drop counts evicted entries and is preserved separately in CSV, never added to packet drops. "
         "Use five-sample moving means; raw snapshots and unsmoothed rates are preserved in CSVs."
     ), configure_parser=configure_parser)
     args._cache_arguments.pop("resource_version")
-    args._cache_arguments["conntrack_version"] = 2
+    args._cache_arguments["conntrack_version"] = 3
     return args
 
 
@@ -157,7 +158,7 @@ def main(argv=None):
         return 0
     try:
         execute_cached("conntrack_time_series", args, cases, collect, render, prepare=prepare,
-                       extra_files=("conntrack.csv",) + (("conntrack_limit.json",) if args.conntrack_max is not None else ()),
+                       extra_files=("conntrack.csv", "conntrack.log") + (("conntrack_limit.json",) if args.conntrack_max is not None else ()),
                        isolated_runs=True)
     except KeyboardInterrupt:
         print("Experiment interrupted; inspect each run's lab/lab.json for cleanup status.", file=sys.stderr)

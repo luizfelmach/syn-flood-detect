@@ -31,7 +31,7 @@ FROM ubuntu:24.04 AS runtime
 
 RUN apt-get update \
     && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-        ca-certificates curl hping3 iproute2 iptables iputils-ping nginx procps \
+        ca-certificates conntrack curl hping3 iproute2 iptables iputils-ping nginx procps \
         tcpdump tini traceroute util-linux \
     && rm -rf /var/lib/apt/lists/*
 
