@@ -257,7 +257,27 @@ def run_child(command, root, env, log, timeout):
             raise
 
 
-def execute(root, profile, jobs, out, smoke):
+def parse_deadline(value):
+    try:
+        parsed = datetime.fromisoformat(value)
+        if parsed.tzinfo is None:
+            raise ValueError('timezone required')
+        return parsed.astimezone(timezone.utc).isoformat()
+    except ValueError as error:
+        raise argparse.ArgumentTypeError('Use an ISO timestamp with timezone, e.g. 2026-11-14T07:00:00-03:00') from error
+
+
+def deadline_remaining(absolute):
+    return datetime.fromisoformat(absolute).timestamp() - time.time() if absolute else float('inf')
+
+
+def resolve_deadline(saved, requested):
+    # A resume can tighten the deadline, never silently extend it.
+    values = [value for value in (saved, requested) if value]
+    return min(values, key=lambda value: datetime.fromisoformat(value).timestamp()) if values else None
+
+
+def execute(root, profile, jobs, out, smoke, absolute_deadline=None):
     started = time.monotonic()
     deadline = started + profile['budget_hours'] * 3600
     with campaign_lock(root):
@@ -277,7 +297,9 @@ def execute(root, profile, jobs, out, smoke):
                             status='running', sessions=[], blocks={}, publication_eligible=not smoke)
             save(out / 'profile.json', profile)
             shutil.copyfile(root / 'topo.clab.yml', out / 'topology.clab.yml')
-        session = dict(started_utc=datetime.now(timezone.utc).isoformat(), host=records, selected=[j['key'] for j in jobs])
+        absolute_deadline = resolve_deadline(manifest.get('deadline_utc'), absolute_deadline)
+        manifest['deadline_utc'] = absolute_deadline
+        session = dict(deadline_utc=absolute_deadline, started_utc=datetime.now(timezone.utc).isoformat(), host=records, selected=[j['key'] for j in jobs])
         manifest['sessions'].append(session)
         manifest['status'] = 'running'
         save(manifest_path, manifest)
@@ -295,7 +317,7 @@ def execute(root, profile, jobs, out, smoke):
                     continue
                 all_history = [r for attempts in manifest['blocks'].values() for r in attempts]
                 required = estimated_seconds(job, all_history) + profile['cleanup_margin_seconds']
-                if deadline - time.monotonic() < required:
+                if min(deadline - time.monotonic(), deadline_remaining(absolute_deadline)) < required:
                     session['stop_reason'] = 'Insufficient budget for next full block and cleanup'
                     break
                 check_space(out, profile)
@@ -317,7 +339,7 @@ def execute(root, profile, jobs, out, smoke):
                 print(f"Running {job['key']} ({job['runs']} runs); log: {attempt_root / 'execution.log'}", flush=True)
                 try:
                     code = run_child(job['command'], root, env, attempt_root / 'execution.log',
-                                     max(1, deadline - time.monotonic() - profile['cleanup_margin_seconds']))
+                                     max(1, min(deadline - time.monotonic(), deadline_remaining(absolute_deadline)) - profile['cleanup_margin_seconds']))
                     record['exit_code'] = code
                     if code:
                         raise RuntimeError(f'Collector exited with status {code}; inspect {attempt_root}')
@@ -351,6 +373,7 @@ def main(argv=None):
     parser.add_argument('--profile', type=Path)
     parser.add_argument('--campaign', type=Path, help='Existing campaign to resume, or new output directory')
     parser.add_argument('--execute', action='store_true')
+    parser.add_argument('--deadline', type=parse_deadline, help='Absolute stop time with timezone; persists across resumes')
     parser.add_argument('--only', choices=FAMILIES)
     parser.add_argument('--seed', type=int)
     parser.add_argument('--smoke', action='store_true', help='Short diagnostic run, ineligible for article')
@@ -367,7 +390,7 @@ def main(argv=None):
             print(shlex.join(job['command'] + ['--dry-run']))
         print('Validated real parsers/cases; no labs, traffic or output directories created.')
         return 0
-    return execute(root, profile, jobs, out, args.smoke)
+    return execute(root, profile, jobs, out, args.smoke, args.deadline)
 
 
 if __name__ == '__main__':

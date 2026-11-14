@@ -93,3 +93,13 @@ Não juntar amostras de máquinas diferentes ou dados antigos de 5 s com os novo
 Não concluir sucesso HTTP pela passagem de SYNs nem recuperação do conntrack apenas
 pela existência de uma janela posterior. Manter origens nunca bloqueadas separadas
 da mediana de reação. A escala do mapa de descarte permanece fixa em 0 a 100%.
+
+PRAZO ABSOLUTO E MONITOR NO TMUX
+  make analysis-chapter4 EXECUTE=1 CAMPAIGN=results/chapter4-night DEADLINE=2026-11-14T07:00:00-03:00
+O prazo exige timezone e fica salvo no manifesto. Retomadas sem DEADLINE mantêm
+esse prazo; um valor posterior não o estende. A margem de limpeza é descontada
+tanto do prazo absoluto quanto das seis horas por invocação. Uma nova pasta por
+correção de código deve receber explicitamente o mesmo prazo absoluto.
+  python3 scripts/watch_chapter4.py results/chapter4-night
+Esse monitor apenas lê manifestos e exibe logs; não inicia coletas nem decide
+correções. --once produz uma única atualização. Pode acompanhar várias pastas.

@@ -99,6 +99,42 @@ class CampaignTests(unittest.TestCase):
         self.assertGreater(expected, job['nominal_seconds'])
         self.assertEqual(campaign.estimated_seconds(job, [dict(status='complete', family=job['family'], elapsed_seconds=2000)]), 2400)
 
+    def test_absolute_deadline_timezone_and_resume(self):
+        import argparse
+        with self.assertRaises(argparse.ArgumentTypeError):
+            campaign.parse_deadline('2026-11-14T07:00:00')
+        deadline = campaign.parse_deadline('2026-11-14T07:00:00-03:00')
+        self.assertEqual(deadline, '2026-11-14T10:00:00+00:00')
+        self.assertEqual(campaign.resolve_deadline(deadline, None), deadline)
+        self.assertEqual(campaign.resolve_deadline(deadline, '2026-11-15T10:00:00+00:00'), deadline)
+        with patch.object(campaign.time, 'time', return_value=1794650400):
+            self.assertEqual(campaign.deadline_remaining(deadline), 0)
+
+    def test_expired_absolute_deadline_survives_resume(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp) / 'campaign'
+            jobs = self.jobs(out)
+            with patch.object(campaign, 'preflight', return_value=self.fake_preflight()), \
+                 patch.object(campaign, 'campaign_lock'), patch.object(campaign, 'check_space'), \
+                 patch.object(campaign, 'run_child') as run, redirect_stdout(io.StringIO()):
+                self.assertEqual(campaign.execute(ROOT, self.profile, jobs, out, False,
+                                                 '2020-01-01T00:00:00+00:00'), 2)
+                self.assertEqual(campaign.execute(ROOT, self.profile, jobs, out, False), 2)
+            run.assert_not_called()
+            self.assertEqual(json.loads((out / 'campaign.json').read_text())['deadline_utc'],
+                             '2020-01-01T00:00:00+00:00')
+
+    def test_timeout_requests_graceful_cleanup(self):
+        import signal
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch.object(campaign.subprocess, 'Popen') as popen:
+                process = popen.return_value
+                process.wait.side_effect = [subprocess.TimeoutExpired('collector', 10), 0]
+                with self.assertRaises(subprocess.TimeoutExpired):
+                    campaign.run_child(['collector'], ROOT, {}, Path(tmp) / 'log', 10)
+                process.send_signal.assert_called_once_with(signal.SIGTERM)
+                self.assertEqual(process.wait.call_count, 2)
+
     def fake_preflight(self):
         return dict(identity={'sources': campaign.source_identity(ROOT), 'image_id': 'test-image'})
 

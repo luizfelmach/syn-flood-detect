@@ -16,6 +16,7 @@ CAMPAIGN ?=
 ONLY ?=
 SEED ?=
 SMOKE ?= 0
+DEADLINE ?=
 
 SNAPSHOT ?= select
 SKIP_PROMPT ?= 0
@@ -225,4 +226,4 @@ $(ANALYSIS_TARGETS):
 
 # Dedicated article profile; individual exploratory targets above remain available.
 analysis-chapter4:
-	@nix-shell analysis/shell.nix --run $(call shell_quote,python3 scripts/run_chapter4.py --profile $(call shell_quote,$(CHAPTER4_PROFILE)) $(if $(filter 1,$(EXECUTE)),--execute) $(if $(CAMPAIGN),--campaign $(call shell_quote,$(CAMPAIGN))) $(if $(ONLY),--only $(call shell_quote,$(ONLY))) $(if $(SEED),--seed $(call shell_quote,$(SEED))) $(if $(filter 1,$(SMOKE)),--smoke))
+	@nix-shell analysis/shell.nix --run $(call shell_quote,python3 scripts/run_chapter4.py --profile $(call shell_quote,$(CHAPTER4_PROFILE)) $(if $(filter 1,$(EXECUTE)),--execute) $(if $(CAMPAIGN),--campaign $(call shell_quote,$(CAMPAIGN))) $(if $(ONLY),--only $(call shell_quote,$(ONLY))) $(if $(SEED),--seed $(call shell_quote,$(SEED))) $(if $(filter 1,$(SMOKE)),--smoke) $(if $(DEADLINE),--deadline $(call shell_quote,$(DEADLINE))))
