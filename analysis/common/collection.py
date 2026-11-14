@@ -141,6 +141,27 @@ def capture_tail(path, offset, destination, baseline=b""):
             dst.write(chunk)
 
 
+def record_kernel_config(prefix, directory):
+    """Read effective namespace settings before campaign traffic starts."""
+    keys = {
+        "server": ("net.ipv4.tcp_syncookies", "net.ipv4.tcp_synack_retries",
+                   "net.ipv4.tcp_max_syn_backlog", "net.core.somaxconn"),
+        "firewall": ("net.netfilter.nf_conntrack_count", "net.netfilter.nf_conntrack_max",
+                     "net.netfilter.nf_conntrack_tcp_timeout_syn_sent",
+                     "net.netfilter.nf_conntrack_tcp_timeout_syn_recv",
+                     "net.netfilter.nf_conntrack_tcp_timeout_established"),
+    }
+    observed = {}
+    for node, names in keys.items():
+        values = command("docker", "exec", prefix + node, "sysctl", "-n", *names).splitlines()
+        if len(values) != len(names):
+            raise ValueError(f"Incomplete kernel configuration for {node}")
+        observed[node] = dict(zip(names, map(int, values)))
+    save(directory / "kernel_config.json", observed)
+    if observed["server"]["net.ipv4.tcp_syncookies"] != 0:
+        raise ValueError("Chapter-4 campaign requires SYN cookies disabled")
+
+
 def run_one(
     case, output, duration, timeout, prefix, packet_dir, *, before=None, after=None
 ):
@@ -167,6 +188,8 @@ def run_one(
     try:
         stage("Verifying previous traffic generators have stopped")
         wait_for_idle(prefix)
+        if os.environ.get("SYN_FLOOD_RECORD_KERNEL") == "1":
+            record_kernel_config(prefix, directory)
         stage("Applying detector configuration")
         metadata["config_before"] = control(prefix, "show")
         # Keep packet processing from updating history while config/reset clears it.

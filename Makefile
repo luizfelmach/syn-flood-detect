@@ -10,6 +10,13 @@ PACKET_HANDLING_MODE ?= filter
 HASH_ALGORITHM ?= halfsiphash
 
 validate_hash = $(if $(and $(filter 1,$(words $(HASH_ALGORITHM))),$(filter fnv1a murmur3 halfsiphash,$(HASH_ALGORITHM))),,$(error Set HASH_ALGORITHM to fnv1a, murmur3 or halfsiphash))
+CHAPTER4_PROFILE ?= analysis/profiles/chapter4.json
+EXECUTE ?= 0
+CAMPAIGN ?=
+ONLY ?=
+SEED ?=
+SMOKE ?= 0
+
 SNAPSHOT ?= select
 SKIP_PROMPT ?= 0
 
@@ -42,7 +49,7 @@ ANALYSIS_TARGETS := analysis-threshold-first-drop \
 	analysis-hash-avalanche \
 	analysis-hash-port-bits
 
-.PHONY: help build deploy destroy graph client attack mode config show reset analysis save download $(ANALYSIS_TARGETS)
+.PHONY: analysis-chapter4 help build deploy destroy graph client attack mode config show reset analysis save download $(ANALYSIS_TARGETS)
 
 help:
 	@printf '%s\n' 'Usage:' '  make <command> [VARIABLE=value ...]' '' 'Commands:'
@@ -51,6 +58,7 @@ help:
 		'make build'   'Build the node image.' \
 		'make deploy'  'Build the image and deploy the lab.' \
 		'make destroy' 'Destroy the lab.' \
+		'make analysis-chapter4' 'Preview chapter-4 campaign; EXECUTE=1 runs; CAMPAIGN=path resumes.' \
 		'make analysis' 'Render analyses with one lab per graph and resets between runs; reuse matching cache; use -j4 for parallel runs.' \
 		'make save'    'Save analysis and cache to S3; prompt for a name (Enter uses date and time).' \
 		'make download' 'Select a saved analysis and cache with fzf; use SNAPSHOT=<id> or latest to skip selection.' \
@@ -214,3 +222,7 @@ $(ANALYSIS_TARGETS):
 		mkdir -p results/analysis; \
 		python3 analysis/$(subst -,_,$(patsubst analysis-%,%,$@)).py $(ANALYSIS_ARGS) $(if $(filter-out analysis-hash-comparison analysis-hash-comparison-primes analysis-halfsiphash-ubf-sweep analysis-hash-avalanche analysis-hash-port-bits,$@),--hash-algorithm "$(HASH_ALGORITHM)") \
 			--out "results/analysis/$(subst -,_,$(patsubst analysis-%,%,$@)).png"'
+
+# Dedicated article profile; individual exploratory targets above remain available.
+analysis-chapter4:
+	@nix-shell analysis/shell.nix --run $(call shell_quote,python3 scripts/run_chapter4.py --profile $(call shell_quote,$(CHAPTER4_PROFILE)) $(if $(filter 1,$(EXECUTE)),--execute) $(if $(CAMPAIGN),--campaign $(call shell_quote,$(CAMPAIGN))) $(if $(ONLY),--only $(call shell_quote,$(ONLY))) $(if $(SEED),--seed $(call shell_quote,$(SEED))) $(if $(filter 1,$(SMOKE)),--smoke))

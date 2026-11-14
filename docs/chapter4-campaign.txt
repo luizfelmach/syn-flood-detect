@@ -1,0 +1,95 @@
+CAMPANHA DO CAPÍTULO 4
+
+Fonte única de parâmetros: analysis/profiles/chapter4.json.
+Executor: scripts/run_chapter4.py (somente biblioteca padrão na orquestração).
+Os coletores existentes continuam responsáveis pelos laboratórios, métricas e PNGs.
+Não há mudança no detector. Os alvos individuais de análise preservam seus valores
+exploratórios antigos; o perfil do artigo é usado por analysis-chapter4.
+
+PRÉVIA (não cria laboratórios nem tráfego)
+  make analysis-chapter4
+
+PREPARAÇÃO NA MÁQUINA DE EXPERIMENTOS
+  make build
+Exige Linux x86_64, Docker local, Containerlab e acesso às ferramentas com as
+permissões usadas habitualmente pelo laboratório. O alvo usa analysis/shell.nix.
+A imagem é preparada antes da janela de seis horas; o executor não faz build.
+Executar apenas uma campanha e não executar outros alvos de análise ao mesmo tempo.
+O ensaio de conntrack altera temporariamente o limite GLOBAL do host, como já faz
+o coletor existente, e verifica sua restauração. Usar a máquina dedicada ao ensaio.
+São exigidos pelo menos 20 GiB livres antes de cada bloco; esse valor é uma reserva
+mínima, não uma estimativa de armazenamento total. CSVs brutos podem ser grandes.
+
+VERIFICAÇÃO CURTA NA MÁQUINA (opcional, antes da coleta científica)
+  make analysis-chapter4 SMOKE=1 EXECUTE=1 CAMPAIGN=results/chapter4-smoke
+Executa as seis famílias com a primeira semente e cargas/durações reduzidas.
+O manifesto marca publication_eligible=false. Não importar esses dados no artigo.
+A verificação mantém os modos e os três valores de retransmissões; não demonstra
+saturação nem recuperação completa. Não reutilizar sua pasta na campanha completa.
+
+CAMPANHA DA NOITE
+  make analysis-chapter4 EXECUTE=1 CAMPAIGN=results/chapter4-night
+Para retomar depois de uma interrupção, executar EXATAMENTE o mesmo comando.
+Também é possível selecionar um bloco:
+  make analysis-chapter4 EXECUTE=1 CAMPAIGN=results/chapter4-night ONLY=conntrack_time_series SEED=2026111301
+Retomar com o comando completo para preencher o restante da matriz.
+Cada invocação dispõe de até seis horas; a retomada abre uma nova janela de tempo.
+Não editar perfil, código ou imagem durante a campanha. Uma mudança exige outra
+pasta de campanha para não misturar condições. Também não mudar de máquina.
+
+PARÂMETROS
+Comuns: HalfSipHash; L=3; inatividade=500 ms; m=2048; pausa legítima=0,5 s.
+Cinco sementes: 2026111301 a 2026111305; uma repetição interna por chamada.
+- Limiar: 2,3,5,10,20; 15 clientes/15 atacantes; SYN a cada 100 ms; 30 s.
+- Inatividade: 1,45,55,75,95,105,150,195,205,250 ms; SYN a cada 50,100,200 ms;
+  15/15 origens; 30 s por configuração (produto cartesiano).
+- Tamanho: 8,64,128,256,512,1024,2048; 10,50,100,200 origens; 20% atacantes;
+  SYN a cada 100 ms; 30 s. O CSV contém descarte dos dois grupos na mesma coleta.
+- Estado/recuperação: 2 clientes; patamares de 10,50,100 atacantes, 10 s cada;
+  SYN a cada 10 ms; 5 s antes e 90 s depois, mantendo clientes ativos;
+  séries de 0,25 s. Backlog e conntrack com filter/allow em laboratórios distintos;
+  conntrack com 65536 entradas. Recuperação apenas allow, retries=1,3,5.
+SYN cookies devem estar desabilitados. Configurações efetivas do kernel são
+registradas por execução, após os ajustes específicos e antes do tráfego.
+
+TEMPO, INTERRUPÇÃO E FALHAS
+30 blocos (família/semente), 350 execuções; observação nominal: 13825 s (~3h50).
+O custo de implantação, preparação, análise e cópia é adicional. O executor mede
+os blocos e usa uma estimativa conservadora para decidir se inicia o próximo,
+reservando 10 min para encerramento. Não encurta medições para caber no orçamento.
+Ao alcançar o limite, solicita encerramento gracioso do coletor; permite que ele
+restaure configurações e destrua laboratórios. Uma limpeza travada pode ultrapassar
+a janela: não usa SIGKILL, que impediria a restauração. Inspecionar os logs nesse caso.
+Falha de coleta interrompe a campanha e preserva evidência, inclusive tentativas
+rejeitadas. Corrigir a causa e retomar. Não escolher resultados por desempenho.
+Saídas: 0=campanha completa; 2=incompleta por seleção/orçamento; 1=erro; 130=interrupção.
+O Make pode converter códigos de erro de seus comandos em seu próprio código 2;
+o estado definitivo está em campaign.json e nos logs.
+Um bloco interrompido é refeito por inteiro. Blocos completos são verificados por
+hash e reutilizados. Um cache novo por tentativa impede usar coletas antigas da
+pasta results/analysis/cache. O código, imagem, ambiente, perfil e máquina precisam
+coincidir para retomar. Hashes dos dados brutos também são conferidos.
+
+ARQUIVOS
+campaign.json: perfil, identidade do ambiente, sessões, status e histórico de blocos.
+profile.json e topology.clab.yml: configuração congelada.
+attempts/<família-semente-id>/execution.log: saída completa do coletor.
+attempts/<...>/cache/: tentativas originais, inclusive falhas e dados brutos.
+attempts/<...>/evidence/: cópia da coleta aceita, cache.json, invocation.json e
+receipt.json com hashes de todos os arquivos. run.json conserva sementes efetivas,
+fases, origens e configuração do detector; kernel_config.json registra servidor e
+firewall, incluindo capacidade e timeouts do conntrack antes do tráfego.
+Os PNGs por bloco ficam na raiz da campanha; são diagnósticos dos scripts atuais.
+Alguns renderizadores existentes suavizam a prévia: usar CSVs sem suavização na
+etapa posterior de publicação, preservando as regras do artigo.
+
+DEPOIS DA EXECUÇÃO
+Transferir a pasta inteira de campanha (preservar CSVs brutos) e validar os hashes.
+O importador atual do artigo ainda usa identificadores fixos de tentativas antigas;
+não apontá-lo para esta campanha sem a adaptação planejada após a coleta.
+Naquela etapa, calcular por execução e depois mediana/mínimo/máximo entre sementes;
+alinhar séries pelos timestamps das fases; atualizar tabelas, legendas e texto juntos.
+Não juntar amostras de máquinas diferentes ou dados antigos de 5 s com os novos.
+Não concluir sucesso HTTP pela passagem de SYNs nem recuperação do conntrack apenas
+pela existência de uma janela posterior. Manter origens nunca bloqueadas separadas
+da mediana de reação. A escala do mapa de descarte permanece fixa em 0 a 100%.

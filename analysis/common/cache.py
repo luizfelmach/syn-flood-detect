@@ -4,6 +4,7 @@ import csv
 import fcntl
 import hashlib
 import json
+import os
 from pathlib import Path
 import uuid
 
@@ -12,7 +13,7 @@ from .metrics import aggregate, analyze_run, write_csv
 from .presentation import preflight, show_png
 from .progress import report
 
-CACHE_ROOT = ROOT / "results" / "analysis" / "cache"
+CACHE_ROOT = Path(os.environ.get("SYN_FLOOD_CACHE_ROOT", ROOT / "results" / "analysis" / "cache"))
 # Version 4 uses idle_timeout_ms and decrements positive counters on every ACK.
 # Earlier collections describe a different detector and must not be reused.
 CACHE_VERSION = 4
@@ -97,6 +98,8 @@ def render_cached(args, directory, data, render, temporal_rates, *, with_origins
 def execute_cached(kind, args, cases, collect, render, temporal_rates=None, *, with_origins=False, prepare=None, extra_files=(), isolated_runs=False):
     if args.dry_run:
         return
+    if os.environ.get("SYN_FLOOD_RECORD_KERNEL") == "1":
+        extra_files = (*extra_files, "kernel_config.json")
     root = CACHE_ROOT / kind
     root.mkdir(parents=True, exist_ok=True)
     # Keep the lock outside attempt directories so publication never replaces it.
