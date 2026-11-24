@@ -17,7 +17,9 @@ use aya::Pod;
 #[repr(C)]
 #[derive(Clone, Copy, Default)]
 pub struct UpdatableBloomFilter {
-    pub counter: u64,
+    pub counter: u16,
+    /// Explicit padding keeps every byte initialized when copying entries to BPF maps.
+    pub reserved: [u8; 6],
     pub timestamp: u64,
 }
 

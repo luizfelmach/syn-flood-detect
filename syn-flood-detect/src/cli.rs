@@ -1,5 +1,5 @@
 use std::{
-    num::{NonZeroU32, NonZeroU64},
+    num::{NonZeroU16, NonZeroU64},
     path::PathBuf,
 };
 
@@ -47,8 +47,8 @@ pub struct RunOptions {
     packet_handling_mode: Mode,
     #[arg(long, help = "SYN inactivity timeout in milliseconds (default: 2000)")]
     idle_timeout_ms: Option<NonZeroU64>,
-    #[arg(long)]
-    syn_count_block_threshold: Option<NonZeroU32>,
+    #[arg(long, help = "SYN count required to block (1..65535)")]
+    syn_count_block_threshold: Option<NonZeroU16>,
     #[arg(long, value_parser = clap::value_parser!(u32).range(1..=i64::from(UBF_ENTRIES)))]
     ubf_size: Option<u32>,
     #[arg(long, value_enum, help = "Hash algorithm (default: halfsiphash)")]
@@ -68,7 +68,7 @@ impl RunOptions {
                 .unwrap_or(defaults.idle_timeout_ms),
             syn_count_block_threshold: self
                 .syn_count_block_threshold
-                .map(NonZeroU32::get)
+                .map(|value| u32::from(value.get()))
                 .unwrap_or(defaults.syn_count_block_threshold),
         }
     }
@@ -79,8 +79,8 @@ impl RunOptions {
 pub struct ConfigOptions {
     #[arg(long, help = "SYN inactivity timeout in milliseconds")]
     idle_timeout_ms: Option<NonZeroU64>,
-    #[arg(long)]
-    syn_count_block_threshold: Option<NonZeroU32>,
+    #[arg(long, help = "SYN count required to block (1..65535)")]
+    syn_count_block_threshold: Option<NonZeroU16>,
     #[arg(long, value_parser = clap::value_parser!(u32).range(1..=i64::from(UBF_ENTRIES)))]
     ubf_size: Option<u32>,
     #[arg(long, value_enum)]
@@ -103,6 +103,43 @@ mod tests {
     use syn_flood_detect_common::hashing::*;
 
     use super::*;
+
+    #[test]
+    fn syn_threshold_fits_the_16_bit_counter_at_startup_and_runtime() {
+        for command in ["run", "config"] {
+            for value in ["1", "65535"] {
+                let parsed = Cli::try_parse_from([
+                    "detector",
+                    command,
+                    "--syn-count-block-threshold",
+                    value,
+                ])
+                .unwrap();
+                let threshold = match parsed.command {
+                    Command::Run(run) => run.config().syn_count_block_threshold,
+                    Command::Config(config) => u32::from(
+                        ConfigUpdate::from(config)
+                            .syn_count_block_threshold
+                            .unwrap()
+                            .get(),
+                    ),
+                    _ => panic!(),
+                };
+                assert_eq!(threshold, value.parse::<u32>().unwrap());
+            }
+            for value in ["0", "65536"] {
+                assert!(
+                    Cli::try_parse_from([
+                        "detector",
+                        command,
+                        "--syn-count-block-threshold",
+                        value,
+                    ])
+                    .is_err()
+                );
+            }
+        }
+    }
 
     #[test]
     fn idle_timeout_is_configurable_at_startup_and_runtime() {

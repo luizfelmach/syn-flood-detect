@@ -99,7 +99,7 @@ fn count_syn(
 }
 
 fn syn_action(entry: &UpdatableBloomFilter, threshold: u32) -> u32 {
-    if entry.counter >= u64::from(threshold) {
+    if u32::from(entry.counter) >= threshold {
         xdp_action::XDP_DROP
     } else {
         xdp_action::XDP_PASS
@@ -138,6 +138,7 @@ mod tests {
         let mut entry = UpdatableBloomFilter {
             counter: 5,
             timestamp: 100,
+            ..Default::default()
         };
         for expected in (0..5).rev() {
             entry = acknowledge(entry).unwrap();
@@ -153,6 +154,7 @@ mod tests {
         let blocked = UpdatableBloomFilter {
             counter: 3,
             timestamp: 100,
+            ..Default::default()
         };
         let once = acknowledge(blocked).unwrap();
         assert_eq!(once.counter, 2);
@@ -166,10 +168,34 @@ mod tests {
     }
 
     #[test]
+    fn syn_counter_saturates_and_keeps_blocking_at_the_16_bit_limit() {
+        let entry = UpdatableBloomFilter {
+            counter: u16::MAX - 1,
+            timestamp: 100,
+            ..Default::default()
+        };
+        let threshold = u32::from(u16::MAX);
+        assert_eq!(syn_action(&entry, threshold), xdp_action::XDP_PASS);
+        let full = count_syn(entry, 101, 2000);
+        assert_eq!(full.counter, u16::MAX);
+        assert_eq!(syn_action(&full, threshold), xdp_action::XDP_DROP);
+        let saturated = count_syn(full, 102, 2000);
+        assert_eq!(saturated.counter, u16::MAX);
+        assert_eq!(saturated.timestamp, 102);
+        assert_eq!(syn_action(&saturated, threshold), xdp_action::XDP_DROP);
+
+        let acknowledged = acknowledge(saturated).unwrap();
+        assert_eq!(acknowledged.counter, u16::MAX - 1);
+        assert_eq!(syn_action(&acknowledged, threshold), xdp_action::XDP_PASS);
+        assert_eq!(count_syn(saturated, 2102, 2000).counter, 1);
+    }
+
+    #[test]
     fn ack_preserves_idle_timeout_boundary_and_empty_bucket_restarts() {
         let entry = acknowledge(UpdatableBloomFilter {
             counter: 5,
             timestamp: 100,
+            ..Default::default()
         })
         .unwrap();
         assert_eq!(count_syn(entry, 2099, 2000).counter, 5);
@@ -179,6 +205,7 @@ mod tests {
         let empty = acknowledge(UpdatableBloomFilter {
             counter: 1,
             timestamp: 100,
+            ..Default::default()
         })
         .unwrap();
         let restarted = count_syn(empty, 101, 2000);

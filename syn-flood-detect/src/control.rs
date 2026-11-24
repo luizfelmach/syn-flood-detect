@@ -1,7 +1,7 @@
 use std::{
     fmt,
     io::ErrorKind,
-    num::{NonZeroU32, NonZeroU64},
+    num::{NonZeroU16, NonZeroU64},
     os::unix::fs::{FileTypeExt, PermissionsExt},
     time::Duration,
 };
@@ -125,6 +125,12 @@ impl TryFrom<FirewallConfig> for Configuration {
         if config.idle_timeout_ms == 0 || config.syn_count_block_threshold == 0 {
             bail!("detector parameters must be positive");
         }
+        if config.syn_count_block_threshold > u32::from(u16::MAX) {
+            bail!(
+                "syn_count_block_threshold must be between 1 and {}",
+                u16::MAX
+            );
+        }
         if !(1..=UBF_ENTRIES).contains(&config.ubf_size) {
             bail!("ubf_size must be between 1 and {UBF_ENTRIES}");
         }
@@ -168,7 +174,7 @@ impl fmt::Display for Configuration {
 #[serde(deny_unknown_fields)]
 pub struct ConfigUpdate {
     pub idle_timeout_ms: Option<NonZeroU64>,
-    pub syn_count_block_threshold: Option<NonZeroU32>,
+    pub syn_count_block_threshold: Option<NonZeroU16>,
     pub ubf_size: Option<u32>,
     pub hash_algorithm: Option<HashAlgorithm>,
 }
@@ -188,7 +194,7 @@ impl ConfigUpdate {
             current.idle_timeout_ms = value.get();
         }
         if let Some(value) = self.syn_count_block_threshold {
-            current.syn_count_block_threshold = value.get();
+            current.syn_count_block_threshold = u32::from(value.get());
         }
         if let Some(value) = self.hash_algorithm {
             current.hash_algorithm = value;
@@ -418,6 +424,35 @@ mod tests {
     use super::*;
 
     #[test]
+    fn syn_threshold_validation_matches_the_16_bit_counter() {
+        let initial = Configuration::try_from(FirewallConfig::default()).unwrap();
+        for threshold in [1, u32::from(u16::MAX)] {
+            let update: ConfigUpdate =
+                serde_json::from_str(&format!(r#"{{"syn_count_block_threshold":{threshold}}}"#))
+                    .unwrap();
+            assert_eq!(
+                update.apply(initial).unwrap().syn_count_block_threshold,
+                threshold
+            );
+        }
+        for threshold in [0, u32::from(u16::MAX) + 1, u32::MAX] {
+            assert!(
+                Configuration::try_from(FirewallConfig {
+                    syn_count_block_threshold: threshold,
+                    ..FirewallConfig::default()
+                })
+                .is_err()
+            );
+            assert!(
+                serde_json::from_str::<Request>(&format!(
+                    r#"{{"command":"config","syn_count_block_threshold":{threshold}}}"#
+                ))
+                .is_err()
+            );
+        }
+    }
+
+    #[test]
     fn idle_timeout_json_update_and_snapshot_use_the_same_field() {
         let initial = Configuration::try_from(FirewallConfig::default()).unwrap();
         let Request::Config(update) =
@@ -511,6 +546,7 @@ mod tests {
                     UpdatableBloomFilter {
                         counter: 7,
                         timestamp: 1,
+                        ..Default::default()
                     },
                     0,
                 )
@@ -577,6 +613,7 @@ mod tests {
                     UpdatableBloomFilter {
                         counter: 7,
                         timestamp: 1,
+                        ..Default::default()
                     },
                     0,
                 )
